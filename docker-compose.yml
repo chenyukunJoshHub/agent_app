@@ -3,34 +3,46 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: agent_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: agent_db
+      POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    networks:
+      - agent_network
 
   # Ollama (Local LLM)
   ollama:
     image: ollama/ollama:latest
     container_name: agent_ollama
+    restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_NUM_PARALLEL=2
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s
+    networks:
+      - agent_network
 
   # Backend API
   backend:
@@ -38,12 +50,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: agent_backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/agent_db
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OLLAMA_BASE_URL: http://ollama:11434
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000"
     depends_on:
@@ -54,12 +68,16 @@ services:
     volumes:
       - ./backend:/app
       - ./skills:/app/skills:ro
-    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+      - backend_logs:/app/logs
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
+    networks:
+      - agent_network
 
   # Frontend
   frontend:
@@ -67,8 +85,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: agent_frontend
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: development
     ports:
       - "3000:3000"
     depends_on:
@@ -78,8 +98,23 @@ services:
       - ./frontend:/app
       - /app/node_modules
       - /app/.next
-    command: npm run dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - agent_network
 
 volumes:
   postgres_data:
+    driver: local
   ollama_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  agent_network:
+    driver: bridge
