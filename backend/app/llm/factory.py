@@ -5,7 +5,7 @@ LLM Factory - Multi-provider support with fallback mechanism
 from typing import Literal
 
 from anthropic import AsyncAnthropic
-from langchain.anthropic import ChatAnthropic
+from langchain_anthropic import ChatAnthropic
 from langchain_community.chat_models import ChatOllama
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI

@@ -4,7 +4,7 @@ Tool Registry - Central registry for all agent tools
 
 from typing import Any, Callable
 
-from langchain_core.tools import BaseTool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -25,12 +25,12 @@ class ToolRegistry:
     """Registry for managing agent tools"""
 
     def __init__(self) -> None:
-        self._tools: dict[str, BaseTool] = {}
+        self._tools: dict[str, StructuredTool] = {}
         self._metadata: dict[str, ToolMetadata] = {}
 
     def register(
         self,
-        tool: BaseTool,
+        tool: StructuredTool,
         requires_confirmation: bool = False,
         dangerous: bool = False,
     ) -> None:
@@ -47,7 +47,7 @@ class ToolRegistry:
         )
         loguru_logger.info(f"Registered tool: {name}")
 
-    def get(self, name: str) -> BaseTool | None:
+    def get(self, name: str) -> StructuredTool | None:
         """Get a tool by name"""
         return self._tools.get(name)
 
@@ -69,8 +69,8 @@ class ToolRegistry:
         metadata = self._metadata.get(name)
         return metadata.dangerous if metadata else False
 
-    def to_langchain_tools(self) -> list[BaseTool]:
-        """Get all tools as LangChain BaseTool list"""
+    def to_langchain_tools(self) -> list[StructuredTool]:
+        """Get all tools as LangChain StructuredTool list"""
         return list(self._tools.values())
 
 
@@ -86,12 +86,13 @@ def register_tool(
 
     def decorator(func: Callable) -> Callable:
         # Create LangChain tool from function
-        tool = BaseTool(
+        tool = StructuredTool.from_function(
+            func,
             name=func.__name__,
             description=func.__doc__ or "",
-            func=func,
         )
         tool_registry.register(tool, requires_confirmation, dangerous)
         return func
 
     return decorator
+
