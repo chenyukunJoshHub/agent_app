@@ -1,0 +1,75 @@
+[project]
+name = "multi-tool-agent"
+version = "0.1.0"
+description = "Multi-Tool AI Agent with Memory, Skills, and Observability"
+authors = [
+    {name = "AI Agent Team"}
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "langchain>=0.1.0",
+    "langchain-anthropic>=0.1.0",
+    "langchain-community>=0.1.0",
+    "langgraph>=0.1.0",
+    "anthropic>=0.18.0",
+    "asyncpg>=0.29.0",
+    "sqlalchemy>=2.0.25",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "tiktoken>=0.5.0",
+    "httpx>=0.26.0",
+    "aiofiles>=23.2.0",
+    "python-multipart>=0.0.6",
+    "websockets>=12.0",
+    "sse-starlette>=1.8.0",
+    "tavily-python>=0.3.0",
+    "beautifulsoup4>=4.12.0",
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.12.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=backend --cov-report=term-missing --cov-report=html"
