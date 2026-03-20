@@ -2,11 +2,10 @@
 Chat API routes - SSE streaming endpoint
 """
 
+import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
-from app.api.routes.chat import ChatRequest, ChatResponse
 
 router = APIRouter()
 
@@ -39,11 +38,11 @@ async def chat_stream(request: ChatRequest):
         try:
             async for event in executor.execute_stream(request.message):
                 yield f"event: {event['type']}\n"
-                yield f"data: {event['data']}\n\n"
+                yield f"data: {json.dumps(event['data'])}\n\n"
 
         except Exception as e:
             yield f"event: error\n"
-            yield f"data: {str(e)}\n\n"
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(),
