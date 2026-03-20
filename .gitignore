@@ -69,3 +69,6 @@ logs/
 .history/
 temp/
 tmp/
+
+# Git Worktrees
+.worktrees/
