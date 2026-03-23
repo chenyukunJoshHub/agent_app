@@ -45,6 +45,9 @@ class SkillManager:
     # 字符预算上限（参考：docs/arch/skill-v3.md §1.8）
     MAX_SKILLS_PROMPT_CHARS = 30_000
 
+    # 单个 SKILL.md 文件大小上限（防止解析超大文件）
+    MAX_SKILL_FILE_BYTES = 100_000  # 100 KB
+
     # 单例实例
     _instance: "SkillManager | None" = None
     _instance_lock = threading.Lock()
@@ -133,9 +136,10 @@ class SkillManager:
         流程：
         1. 遍历 skills_dir 下所有子目录
         2. 查找 SKILL.md 文件
-        3. 解析 YAML frontmatter
-        4. 构建 SkillDefinition
-        5. 过滤 status != active 的 skills
+        3. 检查文件大小（跳过超过 MAX_SKILL_FILE_BYTES 的文件）
+        4. 解析 YAML frontmatter
+        5. 构建 SkillDefinition
+        6. 过滤 status != active 的 skills
 
         Returns:
             SkillDefinition 列表（只包含 active skills）
@@ -153,6 +157,16 @@ class SkillManager:
             # 查找 SKILL.md 文件
             skill_file = skill_dir / "SKILL.md"
             if not skill_file.exists():
+                continue
+
+            # 检查文件大小
+            try:
+                file_size = skill_file.stat().st_size
+                if file_size > self.MAX_SKILL_FILE_BYTES:
+                    # 跳过超大文件
+                    continue
+            except Exception:
+                # 无法获取文件大小，跳过该文件
                 continue
 
             # 解析 SKILL.md

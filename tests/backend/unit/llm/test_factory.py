@@ -303,6 +303,38 @@ class TestCreateAnthropic:
             mock_chat_anthropic.assert_called_once()
             assert result == mock_instance
 
+    def test_create_anthropic_import_error(self, monkeypatch):
+        """Test _create_anthropic raises ImportError when langchain-anthropic is not installed."""
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test_key")
+
+        # Reload both config and factory to pick up new env var
+        import importlib
+        import app.config
+        import app.llm.factory
+
+        app.config._settings = None
+        importlib.reload(app.config)
+        importlib.reload(app.llm.factory)
+
+        # Mock import to raise ImportError
+        import sys
+        original_import = __builtins__.__import__
+        import_err = ImportError("langchain-anthropic is required")
+
+        def mock_import(name, *args, **kwargs):
+            if name == "langchain_anthropic":
+                raise import_err
+            return original_import(name, *args, **kwargs)
+
+        with pytest.raises(ImportError, match="langchain-anthropic is required"):
+            __builtins__.__import__ = mock_import
+            try:
+                from app.llm.factory import _create_anthropic
+                _create_anthropic()
+            finally:
+                __builtins__.__import__ = original_import
+
 
 # Import os for environment variable tests
 import os

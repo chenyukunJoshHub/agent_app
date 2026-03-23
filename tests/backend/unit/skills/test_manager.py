@@ -269,6 +269,42 @@ tools: []
         # Assert malformed file is skipped
         assert len(definitions) == 0
 
+    def test_scan_skips_oversized_files(self, temp_skills_dir, sample_skill_content):
+        """验证 scan() 跳过超过 MAX_SKILL_FILE_BYTES 的文件."""
+        # Create skill with oversized content
+        legal_dir = temp_skills_dir / "legal-search"
+        legal_dir.mkdir()
+
+        # Create content larger than MAX_SKILL_FILE_BYTES (100 KB)
+        oversized_content = sample_skill_content + "\n" + "x" * 101_000
+        (legal_dir / "SKILL.md").write_text(oversized_content, encoding="utf-8")
+
+        # Scan
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+        definitions = manager.scan()
+
+        # Assert oversized file is skipped
+        assert len(definitions) == 0
+
+    def test_scan_accepts_files_within_size_limit(self, temp_skills_dir, sample_skill_content):
+        """验证 scan() 接受在大小限制内的文件."""
+        # Create skill with content just under the limit
+        legal_dir = temp_skills_dir / "legal-search"
+        legal_dir.mkdir()
+
+        # Create content within limit (about 90 KB)
+        large_content = sample_skill_content + "\n" + "x" * 90_000
+        (legal_dir / "SKILL.md").write_text(large_content, encoding="utf-8")
+
+        # Scan
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+        definitions = manager.scan()
+
+        # Assert file is accepted
+        assert len(definitions) == 1
+        assert definitions[0].id == "legal-search"
+
+
 
 class TestSkillManagerBuildSnapshot:
     """Test SkillManager.build_snapshot() method."""
