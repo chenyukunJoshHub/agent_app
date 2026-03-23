@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 from loguru import logger
 
 from app.observability.interrupt_store import InterruptStore
+from app.observability.trace_events import emit_trace_event
 
 
 class HILMiddleware(AgentMiddleware):
@@ -163,6 +164,16 @@ class HILMiddleware(AgentMiddleware):
                         "message": f"Agent 准备执行 {tool_name} 操作，请确认",
                     },
                 )
+                await emit_trace_event(
+                    self.sse_queue,
+                    stage="hil",
+                    step="interrupt_emitted",
+                    payload={
+                        "interrupt_id": interrupt_id,
+                        "tool_name": tool_name,
+                        "risk_level": risk_level,
+                    },
+                )
 
                 # Only interrupt on first matching tool
                 break
@@ -261,6 +272,12 @@ class HILMiddleware(AgentMiddleware):
 
         if approved:
             logger.info(f"User approved interrupt {interrupt_id} for tool {tool_name}")
+            await emit_trace_event(
+                self.sse_queue,
+                stage="hil",
+                step="resume_approved",
+                payload={"interrupt_id": interrupt_id, "tool_name": tool_name},
+            )
             return {
                 "success": True,
                 "message": f"已批准执行 {tool_name} 操作",
@@ -269,6 +286,12 @@ class HILMiddleware(AgentMiddleware):
             }
         else:
             logger.info(f"User rejected interrupt {interrupt_id} for tool {tool_name}")
+            await emit_trace_event(
+                self.sse_queue,
+                stage="hil",
+                step="resume_rejected",
+                payload={"interrupt_id": interrupt_id, "tool_name": tool_name},
+            )
             return {
                 "success": True,
                 "message": f"已取消 {tool_name} 操作",

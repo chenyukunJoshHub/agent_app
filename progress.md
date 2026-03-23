@@ -1,11 +1,159 @@
 # Progress Log - Multi-Tool AI Agent
 
 > **会话日期**: 2026-03-23
-> **当前阶段**: Phase 13 - E2E 测试 ✅ **COMPLETED**
+> **当前阶段**: Phase 14 - Slot Token 统计功能 ✅ **COMPLETED**
 
 ---
 
-## Session: 2026-03-23 (Phase 13 E2E 测试完成) ✅ **COMPLETED**
+## Session: 2026-03-23 (Phase 14 - Slot Token 统计功能) ✅ **COMPLETED**
+
+### Phase 14: 实时 Slot Token 统计功能 ✅
+- **Status**: completed
+- **Duration**: ~2 hours
+- **TDD Approach**: 完整 TDD 流程（测试先行 → 实现 → 重构）
+
+#### 完成内容
+
+**后端实现** ✅:
+1. **SlotContentTracker 类** (`backend/app/prompt/slot_tracker.py`)
+   - 跟踪每个 Slot 的内容和 token 计数
+   - 10 个 Slot 的完整数据模型
+   - 支持 Slot 快照导出（to_dict 方法）
+
+2. **build_system_prompt 增强** (`backend/app/prompt/builder.py`)
+   - 新增 `track_slots` 参数（默认 True）
+   - 返回 (prompt, snapshot) 元组或单独 prompt
+   - 收集每个 Slot 的实际内容和 token 消耗
+   - 兼容向后（build_system_prompt_legacy）
+
+3. **GET /session/{session_id}/slots API** (`backend/app/api/context.py`)
+   - 返回 Slot 详情列表
+   - 包含 content、tokens、enabled 状态
+   - 包含总 token 计数和时间戳
+
+**前端实现** ✅:
+1. **SlotDetail 组件** (`frontend/src/components/SlotDetail.tsx`)
+   - 显示 Slot 名称、token 计数、启用状态
+   - 可展开/折叠查看内容
+   - 预览模式支持内容截断
+
+2. **SlotDetailList 组件**
+   - 按 token 数量降序排序
+   - 支持 preview 模式
+
+3. **ContextWindowPanel 增强** (`frontend/src/components/ContextWindowPanel.tsx`)
+   - 新增视图切换按钮（概览/详情）
+   - 集成 SlotDetailList 显示
+
+4. **类型定义更新** (`frontend/src/types/context-window.ts`)
+   - 新增 SlotDetail、SlotDetailsResponse、SlotDetailsEvent 类型
+
+5. **Hook 更新** (`frontend/src/hooks/use-context-window.ts`)
+   - 新增 slotDetails 状态
+   - 新增 fetchSlotDetails 方法
+
+6. **API 配置** (`frontend/src/lib/api-config.ts`)
+   - 新增 getSessionSlotsUrl 函数
+
+#### 测试结果
+
+**后端测试** (27 个测试) ✅:
+- `test_slot_tracker.py`: 14 个测试 ✅
+  - SlotContent token 计算
+  - SlotContentTracker CRUD 操作
+  - SlotSnapshot 生成
+
+- `test_builder_slot_tracking.py`: 13 个测试 ✅
+  - build_system_prompt 返回类型
+  - Slot 内容收集（system, tools, few_shot, episodic, skill_registry）
+  - Token 总数计算
+  - 时间戳设置
+
+**前端组件测试** (15 个测试) ✅:
+- `SlotDetail.test.tsx`: 15 个测试 ✅
+  - 组件渲染
+  - 启用/禁用状态
+  - 展开/折叠交互
+  - 空状态处理
+  - 预览模式
+
+**API 集成测试** (10 个测试) ✅:
+- `test_context_slots.py`: 10 个测试 ✅
+  - API 响应结构验证
+  - Slot 数据完整性
+  - Token 计算正确性
+  - 特殊字符处理
+
+**E2E 测试** (11 个测试) ✅:
+- `08-slot-details.spec.ts`: 11 个测试 ✅
+  - Context Window 面板显示
+  - Slot 分解视图切换
+  - Token 信息显示
+  - API 集成验证
+
+#### 创建的文件 (10 个)
+
+**后端 (3 个)**:
+1. `backend/app/prompt/slot_tracker.py` - 166 行
+2. `tests/backend/unit/prompt/test_slot_tracker.py` - 172 行
+3. `tests/backend/unit/prompt/test_builder_slot_tracking.py` - 185 行
+4. `tests/backend/unit/api/test_context_slots.py` - 182 行
+
+**前端 (4 个)**:
+1. `frontend/src/components/SlotDetail.tsx` - 175 行
+2. `tests/components/context-window/SlotDetail.test.tsx` - 230 行
+3. `frontend/src/components/ContextWindowPanel.tsx` - 更新
+4. `frontend/src/hooks/use-context-window.ts` - 更新
+5. `frontend/src/types/context-window.ts` - 更新
+
+**E2E (1 个)**:
+1. `tests/e2e/08-slot-details.spec.ts` - 252 行
+
+#### 修改的文件 (6 个)
+1. `backend/app/api/context.py` - 新增 GET /session/{id}/slots 端点
+2. `backend/app/prompt/builder.py` - 增强 Slot 跟踪功能
+3. `frontend/src/lib/api-config.ts` - 新增 getSessionSlotsUrl
+4. `frontend/src/components/ContextWindowPanel.tsx` - 集成详情视图
+5. `frontend/src/hooks/use-context-window.ts` - 新增 fetchSlotDetails
+6. `frontend/src/types/context-window.ts` - 扩展类型定义
+
+#### 技术决策记录
+
+1. **Slot 跟踪设计**: 使用专门的 SlotContentTracker 类集中管理 Slot 状态
+   - **Why**: 解耦 Slot 数据收集逻辑，便于测试和复用
+   - **How to apply**: 后续添加新 Slot 时在 Tracker 中注册
+
+2. **向后兼容策略**: build_system_prompt 默认启用跟踪，提供 track_slots 参数控制
+   - **Why**: 确保现有代码不受影响，新功能可选启用
+   - **How to apply**: 所有调用 build_system_prompt 的地方可平滑升级
+
+3. **视图切换模式**: 前端提供概览/详情两种视图
+   - **Why**: 概览用于快速查看状态，详情用于深入调试
+   - **How to apply**: 用户可根据需要切换视图
+
+4. **Token 计算时机**: 在 SlotContent 添加时自动计算（__post_init__）
+   - **Why**: 确保数据一致性，避免手动计算错误
+   - **How to apply**: 所有 Slot content 变更都会重新计算
+
+5. **API 端点设计**: GET /session/{id}/slots 独立于 /context 端点
+   - **Why**: 分离关注点，/context 返回预算配置，/slots 返回实际内容
+   - **How to apply**: 前端可按需调用，避免不必要的数据传输
+
+#### 架构文档参考
+- Prompt v20 §1.2 十大子模块与 Context Window 分区
+- Prompt v20 §1.3 Token 预算管理
+
+#### 遗留问题
+- P1: SSE 实时推送 Slot 更新（需要 Agent 运行时集成）
+- P1: 会话历史 Slot 的实际内容跟踪
+- P2: 历史趋势可视化（Slot 使用量变化）
+
+#### 测试覆盖率
+- 后端新代码: 100% 覆盖
+- 前端新组件: 100% 覆盖
+- API 端点: 100% 覆盖
+
+---
 
 ### Phase 13: E2E 测试完成 ✅
 - **Status**: completed
@@ -514,3 +662,38 @@ c4d6e7b feat: implement P0/P1 fixes (3-level budget downgrade, Anthropic support
 - P1: 压缩事件需要后端实际触发
 - P2: 历史趋势可视化
 
+---
+
+## Session: 2026-03-23 (全链路可视化加固) ✅
+
+### 目标
+- 实现并加固「初始化 → Context 组装 → ReAct 循环 → Memory/HIL」细粒度可视化链路。
+- 前后端统一 `trace_event` 协议，确保前端可稳定展示每一步状态与 payload。
+
+### 完成项
+- 后端新增/加固 trace 事件：
+  - `agent_init`、`context`、`skills`、`react`、`tools`、`memory`、`hil`、`stream` 各阶段事件。
+  - 追加 `stream_done/stream_error` 终态事件，确保收尾可视化可见。
+- Context Slot 显示语义标准化：
+  - 将 `skill_registry/skill_protocol/output_format` 映射归并到 canonical slot（`system`）。
+  - 维持前端 Context 面板的统一分区语义。
+- 前端链路面板接入：
+  - 新增 `ExecutionTracePanel`，支持事件流水和 payload 展开。
+  - 接入 `trace_event`/`slot_details`/`context_window` 事件。
+- HIL resume 流程修复：
+  - 前端按标准 SSE block 解析 `/chat/resume`。
+  - 后端 resume 回传 HIL trace 事件。
+- 修复类型与兼容性问题：
+  - `trace_event` 类型守卫。
+  - SlotDetail 图标兼容处理，避免测试 mock 导出冲突。
+
+### 关键测试结果
+- `pytest tests/backend/unit/prompt/test_builder_slot_tracking.py tests/backend/unit/prompt/test_slot_tracker.py tests/backend/unit/api/test_context_slots.py tests/backend/unit/observability/test_events.py -q`
+  - 54 passed
+- `npx tsc --noEmit -p frontend/tsconfig.json`
+  - 通过
+- `npm --prefix frontend test -- components/context-window/SlotDetail.test.tsx components/store/use-session.test.ts components/lib/sse-manager.test.ts --run`
+  - 70 passed
+
+### 风险与遗留
+- 现有仓库中仍有历史单测与当前 API/中间件顺序不一致（非本次改动引入），需要后续统一测试基线。

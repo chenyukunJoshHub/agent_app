@@ -1,15 +1,19 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Layers, TrendingUp, Activity, BarChart3 } from 'lucide-react';
+import { Layers, TrendingUp, Activity, BarChart3, FileText } from 'lucide-react';
+import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { ContextWindowData, SlotUsage } from '@/types/context-window';
+import type { ContextWindowData, SlotUsage, SlotDetail } from '@/types/context-window';
 import { SlotBar } from './SlotBar';
 import { CompressionLog } from './CompressionLog';
+import { SlotDetailList } from './SlotDetail';
 
 interface ContextWindowPanelProps {
   /** Context window data */
   data: ContextWindowData;
+  /** Slot details (optional) */
+  slotDetails?: SlotDetail[];
 }
 
 /**
@@ -23,14 +27,14 @@ interface ContextWindowPanelProps {
  *
  * Based on Prompt v20 §1.2 十大子模块与 Context Window 分区
  */
-export function ContextWindowPanel({ data }: ContextWindowPanelProps) {
+export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProps) {
   const { budget, slotUsage, compressionEvents } = data;
+  const [showDetails, setShowDetails] = useState(false);
 
   // Calculate overall usage
   const totalUsed = budget.usage.total_used;
   const totalBudget = budget.working_budget;
-  const usagePercentage =
-    totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0;
+  const usagePercentage = totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0;
 
   // Format numbers
   const formatNumber = (num: number) => {
@@ -88,12 +92,10 @@ export function ContextWindowPanel({ data }: ContextWindowPanelProps) {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-text-secondary" />
-              <span className="text-sm font-medium text-text-primary">
-                总体进度
-              </span>
+              <span className="text-sm font-medium text-text-primary">总体进度</span>
             </div>
             <span
-              className={cn("text-xs font-semibold", statusConfig.text)}
+              className={cn('text-xs font-semibold', statusConfig.text)}
               data-testid="overall-status"
             >
               {statusConfig.label}
@@ -106,8 +108,8 @@ export function ContextWindowPanel({ data }: ContextWindowPanelProps) {
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${Math.min(usagePercentage, 100)}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-              className={cn("h-full rounded-full relative overflow-hidden", statusConfig.bg)}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              className={cn('h-full rounded-full relative overflow-hidden', statusConfig.bg)}
               data-testid="overall-progress-fill"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
@@ -120,7 +122,7 @@ export function ContextWindowPanel({ data }: ContextWindowPanelProps) {
               {usagePercentage.toFixed(1)}% 已使用
             </span>
             <span
-              className={cn("font-medium tabular-nums", statusConfig.text)}
+              className={cn('font-medium tabular-nums', statusConfig.text)}
               data-testid="overall-remaining"
             >
               {formatNumber(budget.usage.total_remaining)} 剩余
@@ -130,21 +132,42 @@ export function ContextWindowPanel({ data }: ContextWindowPanelProps) {
 
         {/* Slot Breakdown */}
         <div className="border-b border-border p-4 bg-bg-card">
-          <div className="mb-3 flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-text-secondary" />
-            <span className="text-sm font-medium text-text-primary">
-              Slot 分解
-            </span>
-            <span className="text-xs text-text-muted">
-              ({slotUsage.length} 个 Slot)
-            </span>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-text-secondary" />
+              <span className="text-sm font-medium text-text-primary">Slot 分解</span>
+              <span className="text-xs text-text-muted">({slotUsage.length} 个 Slot)</span>
+            </div>
+
+            {/* View toggle button */}
+            {slotDetails && slotDetails.length > 0 && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setShowDetails(!showDetails)}
+                className={cn(
+                  'flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors',
+                  showDetails
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-muted text-text-secondary hover:bg-bg-alt'
+                )}
+              >
+                <FileText className="w-3 h-3" />
+                {showDetails ? '显示概览' : '显示详情'}
+              </motion.button>
+            )}
           </div>
 
-          <div className="space-y-2" data-testid="slot-breakdown">
-            {slotUsage.map((slot) => (
-              <SlotBar key={slot.name} slot={slot} />
-            ))}
-          </div>
+          {/* Slot bars or details */}
+          {showDetails && slotDetails ? (
+            <SlotDetailList slots={slotDetails} />
+          ) : (
+            <div className="space-y-2" data-testid="slot-breakdown">
+              {slotUsage.map((slot) => (
+                <SlotBar key={slot.name} slot={slot} />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Statistics Row */}

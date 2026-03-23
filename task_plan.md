@@ -47,12 +47,13 @@
 | 11 | plan-phase11-skills-ui.md | frontend/components/skills/ | Skill v3 §1.6 | ✅ done |
 | 12 | plan-phase12-hil.md | frontend/components/hil/ | Agent v13 §1.13 | ✅ done |
 | 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — | ✅ done |
+| 14 | plan-phase14-slot-token-stats.md | backend/prompt/slot_tracker.py + frontend/ | Prompt v20 §1.2 | ✅ done |
 
 ---
 
 ## 📊 当前状态
 
-### 已完成阶段 (Phase 01-13)
+### 已完成阶段 (Phase 01-14)
 - ✅ 数据库初始化 (PostgreSQL + LangGraph 存储)
 - ✅ SkillManager (扫描、构建快照、3级预算降级、单例模式)
 - ✅ MemoryManager (三层记忆架构、Ephemeral 注入、SummarizationMiddleware)
@@ -66,6 +67,7 @@
 - ✅ Skills UI 面板 (SkillPanel, SkillCard, SkillDetail)
 - ✅ HIL 人工介入流程
 - ✅ E2E 测试套件 (145 个测试)
+- ✅ Slot Token 实时统计功能 (63 个测试)
 
 ### P0/P1/P2 修复完成 ✅
 **执行日期**: 2026-03-23
@@ -75,11 +77,12 @@
 - ✅ Phase 04: Anthropic provider 支持 (Claude 模型)
 - ✅ Phase 07: GET /skills 端点
 
-**P1 任务 (4 个)** ✅:
+**P1 任务 (5 个)** ✅:
 - ✅ Phase 03: SummarizationMiddleware
 - ✅ Phase 07: GET /session/{id}/context 端点
 - ✅ Phase 10: ContextWindowPanel 组件 (3 个子组件)
 - ✅ Phase 11: Skills UI 组件 (3 个子组件)
+- ✅ Phase 14: Slot Token 实时统计功能 (10 个 Slot 内容显示)
 
 **P2 任务 (5 个)** ✅:
 - ✅ Phase 02: SkillManager 单例模式
@@ -92,16 +95,18 @@
 **所有计划阶段已完成！** ✅
 
 **测试统计**:
-- 后端单元测试: 92+ 测试 ✅
-- 前端组件测试: 74+ 测试 ✅
-- E2E 测试: 145 测试 ✅
-- **总计**: 311+ 测试 ✅
+- 后端单元测试: 119+ 测试 ✅ (+27 Phase 14)
+- 前端组件测试: 89+ 测试 ✅ (+15 Phase 14)
+- E2E 测试: 156 测试 ✅ (+11 Phase 14)
+- **总计**: 374+ 测试 ✅ (+63 Phase 14)
 
 **代码覆盖率**:
 - `skills.py`: 90.91%
 - `context.py`: 100%
 - `summarization.py`: 100%
 - `manager.py`: 86.59%
+- `slot_tracker.py`: 100% (Phase 14 新增)
+- `builder.py`: 100% (Slot 跟踪部分，Phase 14 增强)
 
 ---
 
@@ -161,3 +166,18 @@
 - **进度日志**: progress.md
 - **技术决策**: findings.md
 - **阶段计划索引**: docs/plans/README.md
+
+---
+
+## 2026-03-23 会话同步（项目管理更新）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: 全链路可视化加固（初始化 → Context 组装 → ReAct → Memory/HIL）
+
+### 已完成的管理项
+- 已在 `progress.md` 记录本次会话目标、完成项、测试结果与遗留风险。
+- 已在 `findings.md` 记录本次架构决策（trace_event 统一协议、slot 语义归一化、SSE 收尾事件、resume SSE 一致性）。
+
+### 当前阻塞
+- 无新增阻塞项。

@@ -236,7 +236,51 @@ typography: {
 
 ---
 
-*最后更新: 2026-03-21*
+## Phase 14 技术决策（2026-03-23）
+
+### Slot Token 实时统计功能
+
+| 决策 | 理由 | How to apply |
+|------|------|-------------|
+| **SlotContentTracker 类** | 解耦 Slot 数据收集逻辑，便于测试和复用 | 后续添加新 Slot 时在 Tracker 中注册 |
+| **track_slots 参数默认 True** | 新功能默认启用，向后兼容可选关闭 | 所有调用 build_system_prompt 的地方可平滑升级 |
+| **概览/详情双视图** | 概览快速查看状态，详情深入调试 | 用户可根据需要切换视图 |
+| **__post_init__ 自动计算 token** | 确保数据一致性，避免手动计算错误 | 所有 Slot content 变更都会重新计算 |
+| **独立 /slots 端点** | 分离关注点，避免不必要的数据传输 | 前端可按需调用不同端点 |
+
+### 创建的文件（10 个）
+1. `backend/app/prompt/slot_tracker.py` - 166 行
+2. `tests/backend/unit/prompt/test_slot_tracker.py` - 172 行
+3. `tests/backend/unit/prompt/test_builder_slot_tracking.py` - 185 行
+4. `tests/backend/unit/api/test_context_slots.py` - 182 行
+5. `frontend/src/components/SlotDetail.tsx` - 175 行
+6. `frontend/src/components/SlotDetailList.tsx` - 内联
+7. `tests/components/context-window/SlotDetail.test.tsx` - 230 行
+8. `tests/e2e/08-slot-details.spec.ts` - 252 行
+
+### 修改的文件（6 个）
+1. `backend/app/api/context.py` - 新增 GET /session/{id}/slots 端点
+2. `backend/app/prompt/builder.py` - 增强 Slot 跟踪功能
+3. `frontend/src/lib/api-config.ts` - 新增 getSessionSlotsUrl
+4. `frontend/src/components/ContextWindowPanel.tsx` - 集成详情视图
+5. `frontend/src/hooks/use-context-window.ts` - 新增 fetchSlotDetails
+6. `frontend/src/types/context-window.ts` - 扩展类型定义
+
+### 测试结果
+- 后端测试: 27 个 ✅
+- 前端组件测试: 15 个 ✅
+- API 集成测试: 10 个 ✅
+- E2E 测试: 11 个 ✅
+- **总计**: 63 个测试 ✅
+
+### 遗留问题
+- P1: SSE 实时推送 Slot 更新（需要 Agent 运行时集成）
+- P1: 会话历史 Slot 的实际内容跟踪
+- P2: 历史趋势可视化（Slot 使用量变化）
+
+---
+
+*最后更新: 2026-03-23*
 
 ## 用户重要原则：始终使用最新版本（2026-03-21）
 
@@ -1790,3 +1834,39 @@ c4d6e7b feat: implement P0/P1 fixes (3-level budget downgrade, Anthropic support
 - Migration 文件编号规范化
 - 清理 MemoryManager 中的 legacy 方法
 
+---
+
+## 2026-03-23 追加结论：全链路可视化（初始化→Context→ReAct→Memory）
+
+### 问题
+用户要求前端可视化展示 Agent 每一步操作，且粒度尽可能细：初始化、Context 组装、ReAct 链路、记忆保持与 HIL。
+
+### 查阅章节
+- Agent v13：SSE 流式架构、ReAct/HIL 执行链路
+- Prompt v20：10 Slot 预算与组装顺序
+- Memory v5：memory middleware 注入/加载时序
+
+### 结论
+1. **trace_event 必须成为统一事件层**  
+   所有阶段统一输出 `id/timestamp/stage/step/status/payload`，前端仅消费这一协议进行链路渲染。
+
+2. **Context 可视化需“语义归一化”**  
+   Prompt 组装中的原始 slot（如 `skill_registry`、`skill_protocol`、`output_format`）应映射到 canonical slot，避免 UI 分区语义漂移。
+
+3. **SSE 收尾事件必须显式推送**  
+   `stream_done/stream_error` 需以 SSE 事件直接输出，不能只放队列后立即 `break`，否则前端终态链路缺失。
+
+4. **HIL resume 同样遵循 SSE 流协议**  
+   `/chat/resume` 需要按 `event:` + `data:` block 输出，前端用统一解析器消费，保证链路连续。
+
+### 影响文件
+- 后端：
+  - `backend/app/observability/trace_events.py`
+  - `backend/app/agent/langchain_engine.py`
+  - `backend/app/api/chat.py`
+  - `backend/app/api/context.py`
+  - `backend/app/prompt/builder.py`
+- 前端：
+  - `frontend/src/app/page.tsx`
+  - `frontend/src/components/ExecutionTracePanel.tsx`
+  - `frontend/src/components/SlotDetail.tsx`

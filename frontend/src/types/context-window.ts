@@ -5,10 +5,6 @@
  * Based on Prompt v20 §1.2 十大子模块与 Context Window 分区
  */
 
-/**
- * Token slot allocations (10 slots)
- * Based on Prompt v20 §1.2
- */
 export interface SlotAllocation {
   /** Slot ①: System Prompt + Skill Registry + Few-shot */
   system: number;
@@ -26,15 +22,12 @@ export interface SlotAllocation {
   tools: number;
   /** Slot ⑧: Conversation history (elastic) */
   history: number;
-  /** Slot ⑨: Output format (included in system) */
+  /** Slot ⑨: Output format (optional in backend payload) */
   output_format?: number;
-  /** Slot ⑩: User input (real-time) */
+  /** Slot ⑩: User input (optional in backend payload) */
   user_input?: number;
 }
 
-/**
- * Slot usage with actual consumption
- */
 export interface SlotUsage {
   /** Slot name */
   name: keyof SlotAllocation;
@@ -48,9 +41,6 @@ export interface SlotUsage {
   color: string;
 }
 
-/**
- * Token usage metrics
- */
 export interface UsageMetrics {
   /** Total tokens used */
   total_used: number;
@@ -62,10 +52,6 @@ export interface UsageMetrics {
   output_reserve: number;
 }
 
-/**
- * Token budget state (from backend API)
- * Matches backend/app/api/context.py#TokenBudgetState
- */
 export interface TokenBudgetState {
   /** Model context window size (e.g., 200,000 for Claude Sonnet 4.6) */
   model_context_window: number;
@@ -77,9 +63,6 @@ export interface TokenBudgetState {
   usage: UsageMetrics;
 }
 
-/**
- * Compression event log
- */
 export interface CompressionEvent {
   /** Event ID */
   id: string;
@@ -97,9 +80,6 @@ export interface CompressionEvent {
   affected_slots: string[];
 }
 
-/**
- * Context window data for display
- */
 export interface ContextWindowData {
   /** Token budget state */
   budget: TokenBudgetState;
@@ -109,33 +89,53 @@ export interface ContextWindowData {
   compressionEvents: CompressionEvent[];
 }
 
-/**
- * SSE event type for context window updates
- */
 export interface ContextWindowEvent {
   type: 'context_window';
   data: ContextWindowData;
 }
 
-/**
- * Slot color mapping for visualization
- */
+export interface SlotDetail {
+  /** Slot name */
+  name: string;
+  /** Display name in Chinese */
+  display_name: string;
+  /** Slot content */
+  content: string;
+  /** Token count */
+  tokens: number;
+  /** Whether slot is enabled */
+  enabled: boolean;
+}
+
+export interface SlotDetailsResponse {
+  /** Session ID */
+  session_id?: string;
+  /** Slot details */
+  slots: SlotDetail[];
+  /** Total tokens */
+  total_tokens: number;
+  /** Timestamp */
+  timestamp: number;
+}
+
+export interface SlotDetailsEvent {
+  type: 'slot_details';
+  data: SlotDetailsResponse;
+}
+
 export const SLOT_COLORS: Record<keyof SlotAllocation, string> = {
-  system: '#5E6AD2',          // Primary - blue
-  active_skill: '#8B5CF6',    // Purple - skill activation
-  few_shot: '#06B6D4',        // Cyan - examples
-  rag: '#10B981',             // Green - knowledge
-  episodic: '#F59E0B',        // Orange - user memory
-  procedural: '#EF4444',      // Red - patterns
-  tools: '#3B82F6',           // Blue - tool schemas
-  history: '#6366F1',         // Indigo - conversation
-  output_format: '#EC4899',   // Pink - format
-  user_input: '#22C55E',      // Green - user input
+  system: '#5E6AD2',
+  active_skill: '#8B5CF6',
+  few_shot: '#06B6D4',
+  rag: '#10B981',
+  episodic: '#F59E0B',
+  procedural: '#EF4444',
+  tools: '#3B82F6',
+  history: '#6366F1',
+  output_format: '#EC4899',
+  user_input: '#22C55E',
 } as const;
 
-/**
- * Slot display names in Chinese
- */
 export const SLOT_DISPLAY_NAMES: Record<keyof SlotAllocation, string> = {
   system: '系统提示词',
   active_skill: '活跃技能',
@@ -148,3 +148,4 @@ export const SLOT_DISPLAY_NAMES: Record<keyof SlotAllocation, string> = {
   output_format: '输出格式',
   user_input: '用户输入',
 } as const;
+

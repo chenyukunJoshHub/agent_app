@@ -1,0 +1,60 @@
+"""Trace event helpers for fine-grained SSE observability."""
+
+from __future__ import annotations
+
+import time
+from datetime import UTC, datetime
+from inspect import isawaitable
+from typing import Any
+
+
+def _iso_now() -> str:
+    """Return current UTC time in ISO8601 format."""
+    return datetime.now(UTC).isoformat()
+
+
+def build_trace_event(
+    *,
+    stage: str,
+    step: str,
+    status: str = "ok",
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a normalized trace event payload."""
+    return {
+        "id": f"trace_{time.time_ns()}",
+        "timestamp": _iso_now(),
+        "stage": stage,
+        "step": step,
+        "status": status,
+        "payload": payload or {},
+    }
+
+
+async def emit_trace_event(
+    queue: Any | None,
+    *,
+    stage: str,
+    step: str,
+    status: str = "ok",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Emit a `trace_event` via SSE queue when queue is available."""
+    if queue is None:
+        return
+    put_result = queue.put(
+        (
+            "trace_event",
+            build_trace_event(
+                stage=stage,
+                step=step,
+                status=status,
+                payload=payload,
+            ),
+        )
+    )
+    if isawaitable(put_result):
+        await put_result
+
+
+__all__ = ["build_trace_event", "emit_trace_event"]

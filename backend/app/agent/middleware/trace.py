@@ -9,6 +9,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 from loguru import logger
 
+from app.observability.trace_events import emit_trace_event
+
 
 class TraceMiddleware(AgentMiddleware):
     """
@@ -55,6 +57,12 @@ class TraceMiddleware(AgentMiddleware):
         """
         logger.debug("TraceMiddleware: abefore_agent called")
         await self._send_sse_event("agent_start", {"session_id": state.get("session_id")})
+        await emit_trace_event(
+            self.sse_queue,
+            stage="react",
+            step="turn_start",
+            payload={"messages": len(state.get("messages", []))},
+        )
         return None
 
     def wrap_model_call(
@@ -66,6 +74,21 @@ class TraceMiddleware(AgentMiddleware):
         P0: Pass-through only.
         """
         logger.debug("TraceMiddleware: wrap_model_call called")
+        if self.sse_queue is not None:
+            try:
+                import asyncio
+
+                asyncio.create_task(
+                    emit_trace_event(
+                        self.sse_queue,
+                        stage="react",
+                        step="model_call_start",
+                        status="start",
+                        payload={"messages": len(getattr(request, "messages", []) or [])},
+                    )
+                )
+            except RuntimeError:
+                pass
         return handler(request)
 
     async def awrap_model_call(
@@ -77,6 +100,13 @@ class TraceMiddleware(AgentMiddleware):
         P0: Pass-through only.
         """
         logger.debug("TraceMiddleware: awrap_model_call called")
+        await emit_trace_event(
+            self.sse_queue,
+            stage="react",
+            step="model_call_start",
+            status="start",
+            payload={"messages": len(getattr(request, "messages", []) or [])},
+        )
         result = handler(request)
         # Handle both coroutines and direct results
         if hasattr(result, "__await__"):
@@ -99,6 +129,12 @@ class TraceMiddleware(AgentMiddleware):
             dict | None: State updates (None for trace middleware)
         """
         logger.debug("TraceMiddleware: aafter_model called")
+        await emit_trace_event(
+            self.sse_queue,
+            stage="react",
+            step="model_call_end",
+            payload={"messages": len(state.get("messages", []))},
+        )
 
         # Extract latest AI message for thought content
         messages = state.get("messages", [])
@@ -118,6 +154,12 @@ class TraceMiddleware(AgentMiddleware):
                     await self._send_sse_event(
                         "thought",
                         {"content": latest_message.content},
+                    )
+                    await emit_trace_event(
+                        self.sse_queue,
+                        stage="react",
+                        step="thought_emitted",
+                        payload={"chars": len(str(latest_message.content))},
                     )
 
                 # Send token_update event
@@ -151,6 +193,16 @@ class TraceMiddleware(AgentMiddleware):
                             "remaining": remaining,
                         },
                     )
+                    await emit_trace_event(
+                        self.sse_queue,
+                        stage="context",
+                        step="token_update",
+                        payload={
+                            "current": current_usage,
+                            "budget": budget,
+                            "remaining": remaining,
+                        },
+                    )
 
         return None
 
@@ -177,6 +229,12 @@ class TraceMiddleware(AgentMiddleware):
                             "finish_reason", "unknown"
                         ),
                     },
+                )
+                await emit_trace_event(
+                    self.sse_queue,
+                    stage="react",
+                    step="turn_done",
+                    payload={"answer_chars": len(str(last_message.content))},
                 )
 
         return None

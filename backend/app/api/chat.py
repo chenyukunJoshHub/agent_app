@@ -15,6 +15,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.langchain_engine import create_react_agent
+from app.observability.trace_events import build_trace_event, emit_trace_event
 
 
 # Request/Response Models
@@ -49,6 +50,14 @@ class SSEEventQueue:
     async def get(self) -> tuple[str, dict[str, Any]]:
         """Get an event from the queue."""
         return await self._queue.get()
+
+    def get_nowait(self) -> tuple[str, dict[str, Any]]:
+        """Get an event without waiting."""
+        return self._queue.get_nowait()
+
+    def empty(self) -> bool:
+        """Check whether queue is empty."""
+        return self._queue.empty()
 
     def task_done(self) -> None:
         """Mark a task as done."""
@@ -91,9 +100,25 @@ async def _run_agent_stream(
     """
     # Create SSE queue
     event_queue = SSEEventQueue()
+    await emit_trace_event(
+        event_queue,
+        stage="stream",
+        step="request_received",
+        payload={
+            "session_id": session_id,
+            "user_id": user_id,
+            "message_chars": len(message),
+        },
+    )
 
     # Create agent with SSE queue (await the async function)
     agent = await create_react_agent(sse_queue=event_queue)
+    await emit_trace_event(
+        event_queue,
+        stage="stream",
+        step="agent_created",
+        payload={"session_id": session_id},
+    )
 
     # Config for LangGraph (thread_id = session_id)
     config = {
@@ -105,6 +130,12 @@ async def _run_agent_stream(
     # Run agent in background
     agent_task = asyncio.create_task(
         _execute_agent(agent, message, config, event_queue)
+    )
+    await emit_trace_event(
+        event_queue,
+        stage="stream",
+        step="stream_started",
+        payload={"session_id": session_id},
     )
 
     # Stream events
@@ -121,11 +152,28 @@ async def _run_agent_stream(
             if event_type == "done":
                 # Wait for agent task to complete
                 await agent_task
+                yield await _format_sse_event(
+                    "trace_event",
+                    build_trace_event(
+                        stage="stream",
+                        step="stream_done",
+                        payload={"session_id": session_id},
+                    ),
+                )
                 break
 
             if event_type == "error":
                 # Agent encountered error
                 await agent_task
+                yield await _format_sse_event(
+                    "trace_event",
+                    build_trace_event(
+                        stage="stream",
+                        step="stream_error",
+                        status="error",
+                        payload={"session_id": session_id, "error": data.get("message", "")},
+                    ),
+                )
                 break
 
     except Exception as e:
@@ -151,6 +199,13 @@ async def _execute_agent(
     seq = 0  # Event sequence counter
 
     try:
+        await emit_trace_event(
+            event_queue,
+            stage="react",
+            step="execution_start",
+            status="start",
+            payload={"message_chars": len(message)},
+        )
         # Prepare input
         messages = [HumanMessage(content=message)]
 
@@ -195,6 +250,12 @@ async def _execute_agent(
                             )
                         )
                         logger.debug(f"Tool start: {tool_name}")
+                        await emit_trace_event(
+                            event_queue,
+                            stage="tools",
+                            step="tool_start",
+                            payload={"tool_name": tool_name, "args": tool_args},
+                        )
 
                 # Handle AIMessage content (thought/response)
                 if hasattr(msg, "content") and msg.content:
@@ -230,16 +291,38 @@ async def _execute_agent(
                             )
                         )
                         logger.debug(f"Tool result: {msg.content[:100]}...")
+                        await emit_trace_event(
+                            event_queue,
+                            stage="tools",
+                            step="tool_result",
+                            payload={
+                                "tool_call_id": tool_call_id,
+                                "result_chars": len(str(msg.content)),
+                            },
+                        )
 
         # Send final done event if not already sent
         await event_queue.put(("done", {"answer": "执行完成", "finish_reason": "stop"}))
+        await emit_trace_event(
+            event_queue,
+            stage="react",
+            step="execution_done",
+            payload={"events_emitted": seq},
+        )
 
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")
         await event_queue.put(("error", {"message": str(e)}))
+        await emit_trace_event(
+            event_queue,
+            stage="react",
+            step="execution_failed",
+            status="error",
+            payload={"error": str(e)},
+        )
 
 
-@router.get("/chat")
+@router.get("")
 async def chat(
     message: str,
     session_id: str,
@@ -278,7 +361,7 @@ async def chat(
     )
 
 
-@router.post("/chat/resume")
+@router.post("/resume")
 async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
     """
     Resume interrupted chat (HIL).
@@ -334,8 +417,10 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
         )
 
     # Create HIL middleware instance to handle resume
+    event_queue = SSEEventQueue()
     hil_middleware = HILMiddleware(
         interrupt_store=interrupt_store,
+        sse_queue=event_queue,
         interrupt_on={interrupt_data.get("tool_name", ""): True},
     )
 
@@ -348,6 +433,9 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
     if not request.approved:
         async def rejected_stream() -> AsyncIterator[str]:
             yield await _format_sse_event("hil_resolved", result)
+            while not event_queue.empty():
+                event_type, event_data = event_queue.get_nowait()
+                yield await _format_sse_event(event_type, event_data)
             yield await _format_sse_event(
                 "done",
                 {
@@ -368,6 +456,9 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
     async def approved_stream() -> AsyncIterator[str]:
         # Send approval confirmation
         yield await _format_sse_event("hil_resolved", result)
+        while not event_queue.empty():
+            event_type, event_data = event_queue.get_nowait()
+            yield await _format_sse_event(event_type, event_data)
 
         # Indicate that the tool execution would continue here
         # For P1, we simulate the completion

@@ -8,6 +8,7 @@ import { create } from 'zustand';
 
 import type { TimelineEvent } from '@/components/Timeline';
 import type { ContextWindowData } from '@/types/context-window';
+import type { TraceEvent } from '@/types/trace';
 
 export interface Message {
   id: string;
@@ -38,6 +39,16 @@ export interface SessionState {
 
   // Context Window
   contextWindowData: ContextWindowData | null;
+  slotDetails: Array<{
+    name: string;
+    display_name: string;
+    content: string;
+    tokens: number;
+    enabled: boolean;
+  }>;
+
+  // Detailed execution trace
+  traceEvents: TraceEvent[];
 
   // Current session
   sessionId: string;
@@ -54,6 +65,17 @@ export interface SessionState {
   clearTimelineEvents: () => void;
   setTokenUsed: (used: number) => void;
   setContextWindowData: (data: ContextWindowData | null) => void;
+  setSlotDetails: (
+    slots: Array<{
+      name: string;
+      display_name: string;
+      content: string;
+      tokens: number;
+      enabled: boolean;
+    }>
+  ) => void;
+  addTraceEvent: (event: TraceEvent) => void;
+  clearTraceEvents: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setSessionId: (sessionId: string) => void;
@@ -67,6 +89,8 @@ export const useSession = create<SessionState>((set, _get) => ({
   tokenUsed: 0,
   tokenBudget: 32000,
   contextWindowData: null,
+  slotDetails: [],
+  traceEvents: [],
   sessionId: `session_${Date.now()}`,
   userId: 'dev_user',
   isLoading: false,
@@ -117,11 +141,30 @@ export const useSession = create<SessionState>((set, _get) => ({
 
   setContextWindowData: (data) => set({ contextWindowData: data }),
 
+  setSlotDetails: (slots) => set({ slotDetails: slots }),
+
+  addTraceEvent: (event) => {
+    set((state) => ({
+      // keep only latest 500 to avoid unbounded growth
+      traceEvents: [...state.traceEvents, event].slice(-500),
+    }));
+  },
+
+  clearTraceEvents: () => set({ traceEvents: [] }),
+
   setLoading: (loading) => set({ isLoading: loading }),
 
   setError: (error) => set({ error }),
 
   setSessionId: (sessionId) => set({ sessionId }),
 
-  clearMessages: () => set({ messages: [], timelineEvents: [], tokenUsed: 0 }),
+  clearMessages: () =>
+    set({
+      messages: [],
+      timelineEvents: [],
+      traceEvents: [],
+      tokenUsed: 0,
+      contextWindowData: null,
+      slotDetails: [],
+    }),
 }));

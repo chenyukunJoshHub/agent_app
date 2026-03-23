@@ -23,6 +23,7 @@ from loguru import logger
 
 from app.memory.manager import MemoryManager
 from app.memory.schemas import MemoryContext
+from app.observability.trace_events import emit_trace_event
 
 
 class MemoryState(TypedDict, total=False):
@@ -51,13 +52,19 @@ class MemoryMiddleware(AgentMiddleware):
 
     state_schema = MemoryState  # Per architecture doc §2.5 solution A
 
-    def __init__(self, memory_manager: MemoryManager) -> None:
+    def __init__(
+        self,
+        memory_manager: MemoryManager,
+        sse_queue: Any | None = None,
+    ) -> None:
         """Initialize MemoryMiddleware.
 
         Args:
             memory_manager: MemoryManager instance for store operations
+            sse_queue: Optional SSE queue for detailed trace events
         """
         self.mm = memory_manager
+        self.sse_queue = sse_queue
         logger.info("MemoryMiddleware initialized (P0 mode: load + inject)")
 
     async def abefore_agent(
@@ -76,6 +83,12 @@ class MemoryMiddleware(AgentMiddleware):
             dict | None: State updates with memory_ctx
         """
         logger.debug("MemoryMiddleware: abefore_agent called")
+        await emit_trace_event(
+            self.sse_queue,
+            stage="memory",
+            step="load_start",
+            status="start",
+        )
 
         # Get user_id from runtime.config["configurable"]
         user_id = ""
@@ -91,6 +104,15 @@ class MemoryMiddleware(AgentMiddleware):
         logger.debug(
             f"MemoryMiddleware: loaded profile for user={user_id}, "
             f"preferences={len(episodic.preferences)} items"
+        )
+        await emit_trace_event(
+            self.sse_queue,
+            stage="memory",
+            step="load_success",
+            payload={
+                "user_id": user_id,
+                "preferences_count": len(episodic.preferences),
+            },
         )
 
         return {"memory_ctx": memory_ctx}
@@ -120,12 +142,42 @@ class MemoryMiddleware(AgentMiddleware):
 
         if not memory_ctx:
             # No profile to inject, pass through
+            if self.sse_queue is not None:
+                try:
+                    import asyncio
+
+                    asyncio.create_task(
+                        emit_trace_event(
+                            self.sse_queue,
+                            stage="memory",
+                            step="inject_skip",
+                            status="skip",
+                            payload={"reason": "no_memory_ctx"},
+                        )
+                    )
+                except RuntimeError:
+                    pass
             return handler(request)
 
         # Build ephemeral prompt
         memory_text = self.mm.build_ephemeral_prompt(memory_ctx)
         if not memory_text:
             # Empty preferences, pass through
+            if self.sse_queue is not None:
+                try:
+                    import asyncio
+
+                    asyncio.create_task(
+                        emit_trace_event(
+                            self.sse_queue,
+                            stage="memory",
+                            step="inject_skip",
+                            status="skip",
+                            payload={"reason": "empty_preferences"},
+                        )
+                    )
+                except RuntimeError:
+                    pass
             return handler(request)
 
         # Inject into System Message via request.override()
@@ -133,6 +185,20 @@ class MemoryMiddleware(AgentMiddleware):
         new_content = (existing.content + memory_text) if existing else memory_text
 
         logger.debug(f"MemoryMiddleware: injecting profile ({len(memory_text)} chars)")
+        if self.sse_queue is not None:
+            try:
+                import asyncio
+
+                asyncio.create_task(
+                    emit_trace_event(
+                        self.sse_queue,
+                        stage="memory",
+                        step="inject_success",
+                        payload={"injected_chars": len(memory_text)},
+                    )
+                )
+            except RuntimeError:
+                pass
 
         return handler(request.override(system_message=SystemMessage(content=new_content)))
 
@@ -176,6 +242,13 @@ class MemoryMiddleware(AgentMiddleware):
             dict | None: State updates (P0: None)
         """
         logger.debug("MemoryMiddleware: aafter_agent called (P0: no-op)")
+        await emit_trace_event(
+            self.sse_queue,
+            stage="memory",
+            step="save_skip",
+            status="skip",
+            payload={"mode": "P0_noop"},
+        )
         # P0: Don't write to store yet
         return None
 

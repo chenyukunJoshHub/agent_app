@@ -3,18 +3,22 @@
 import { useRef, useState } from 'react';
 
 import { motion } from 'framer-motion';
-import { Bot, Clock, Wrench, History } from 'lucide-react';
+import { Activity, Bot, Clock, History, Layers, Wrench } from 'lucide-react';
 
 import { ChatInput } from '@/components/ChatInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { ContextWindowPanel } from '@/components/ContextWindowPanel';
+import { ExecutionTracePanel } from '@/components/ExecutionTracePanel';
 import { MessageList } from '@/components/MessageList';
-import { ToolCallTrace } from '@/components/ToolCallTrace';
 import { Timeline } from '@/components/Timeline';
 import { TokenBar } from '@/components/TokenBar';
-import { cn } from '@/lib/utils';
+import { ToolCallTrace } from '@/components/ToolCallTrace';
 import { getChatResumeUrl, getChatStreamUrl } from '@/lib/api-config';
 import { sseManager } from '@/lib/sse-manager';
+import { cn } from '@/lib/utils';
 import { useSession } from '@/store/use-session';
+import type { SlotDetailsResponse } from '@/types/context-window';
+import type { TraceEvent } from '@/types/trace';
 
 interface InterruptData {
   interrupt_id: string;
@@ -24,23 +28,93 @@ interface InterruptData {
   message: string;
 }
 
+interface ParsedSSEEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+function isTraceEvent(data: unknown): data is TraceEvent {
+  if (typeof data !== 'object' || data === null) {
+    return false;
+  }
+  const record = data as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    typeof record.timestamp === 'string' &&
+    typeof record.stage === 'string' &&
+    typeof record.step === 'string' &&
+    typeof record.status === 'string' &&
+    typeof record.payload === 'object' &&
+    record.payload !== null
+  );
+}
+
+async function consumeSSEStream(
+  response: Response,
+  onEvent: (evt: ParsedSSEEvent) => void
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() || '';
+
+    for (const block of blocks) {
+      const lines = block.split('\n');
+      let eventName = 'message';
+      let dataLine = '';
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventName = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          dataLine += line.slice(6);
+        }
+      }
+
+      if (!dataLine) continue;
+
+      try {
+        const data = JSON.parse(dataLine);
+        onEvent({ event: eventName, data });
+      } catch {
+        // ignore malformed payload chunks
+      }
+    }
+  }
+}
+
 export default function HomePage() {
   const {
     messages,
     isLoading,
     timelineEvents,
+    traceEvents,
+    slotDetails,
+    contextWindowData,
     tokenUsed,
     tokenBudget,
     addMessage,
     addTimelineEvent,
+    addTraceEvent,
     setTokenUsed,
+    setContextWindowData,
+    setSlotDetails,
     setLoading,
     setError,
   } = useSession();
+
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [currentInterrupt, setCurrentInterrupt] = useState<InterruptData | null>(null);
-  const [activeTab, setActiveTab] = useState<'trace' | 'timeline'>('trace');
-  /** Register SSE handlers once — repeating `sseManager.on()` stacks listeners and breaks multi-turn chat. */
+  const [activeTab, setActiveTab] = useState<'chain' | 'timeline' | 'tools' | 'context'>('chain');
   const sseHandlersRegistered = useRef(false);
   const loadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -52,10 +126,7 @@ export default function HomePage() {
   };
 
   const handleSendMessage = async (message: string) => {
-    // Add user message
     addMessage({ role: 'user', content: message });
-
-    // Add placeholder for assistant response
     addMessage({
       role: 'assistant',
       content: '',
@@ -66,7 +137,6 @@ export default function HomePage() {
     setError(null);
 
     try {
-      // Connect SSE
       const sessionId = useSession.getState().sessionId;
       const userId = useSession.getState().userId;
 
@@ -87,26 +157,37 @@ export default function HomePage() {
       if (!sseHandlersRegistered.current) {
         sseHandlersRegistered.current = true;
 
-        // Set up event handlers (once per page lifetime)
+        sseManager.on('trace_event', ({ data }) => {
+          if (isTraceEvent(data)) {
+            addTraceEvent(data);
+          }
+        });
+
+        sseManager.on('slot_details', ({ data }) => {
+          const payload = data as SlotDetailsResponse;
+          if (payload.slots) {
+            setSlotDetails(payload.slots);
+          }
+        });
+
+        sseManager.on('context_window', ({ data }) => {
+          setContextWindowData(data as any);
+        });
+
         sseManager.on('thought', ({ data }) => {
           const { content } = data as { content: string };
-
-          // Add timeline event
           addTimelineEvent({
             type: 'thought',
             content,
           });
 
-          // Append thought to assistant message
-          const messages = useSession.getState().messages;
-          const lastMsg = messages[messages.length - 1];
+          const sessionState = useSession.getState();
+          const lastMsg = sessionState.messages[sessionState.messages.length - 1];
           if (lastMsg && lastMsg.role === 'assistant') {
-            const updatedMsg = {
-              ...lastMsg,
-              content: lastMsg.content + '\n' + content,
-            };
+            const text = lastMsg.content ? `${lastMsg.content}\n${content}` : content;
+            const updatedMsg = { ...lastMsg, content: text };
             useSession.setState({
-              messages: [...messages.slice(0, -1), updatedMsg],
+              messages: [...sessionState.messages.slice(0, -1), updatedMsg],
             });
           }
         });
@@ -116,17 +197,14 @@ export default function HomePage() {
             tool_name: string;
             args: Record<string, unknown>;
           };
-
-          // Add timeline event
           addTimelineEvent({
             type: 'tool_start',
             content: `调用工具 ${tool_name}`,
             toolName: tool_name,
           });
 
-          // Add tool call to current assistant message
-          const messages = useSession.getState().messages;
-          const lastMsg = messages[messages.length - 1];
+          const sessionState = useSession.getState();
+          const lastMsg = sessionState.messages[sessionState.messages.length - 1];
           if (lastMsg && lastMsg.role === 'assistant') {
             const newToolCall = {
               id: `tc_${Date.now()}`,
@@ -136,7 +214,7 @@ export default function HomePage() {
             };
             useSession.setState({
               messages: [
-                ...messages.slice(0, -1),
+                ...sessionState.messages.slice(0, -1),
                 {
                   ...lastMsg,
                   tool_calls: [...(lastMsg.tool_calls || []), newToolCall],
@@ -147,20 +225,18 @@ export default function HomePage() {
         });
 
         sseManager.on('tool_result', ({ data }) => {
-          // Add timeline event
           addTimelineEvent({
             type: 'tool_result',
             content: '工具执行完成',
           });
 
-          // Update tool call with result
-          const messages = useSession.getState().messages;
-          const lastMsg = messages[messages.length - 1];
-          if (lastMsg && lastMsg.tool_calls) {
+          const sessionState = useSession.getState();
+          const lastMsg = sessionState.messages[sessionState.messages.length - 1];
+          if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.length > 0) {
             const lastToolCall = lastMsg.tool_calls[lastMsg.tool_calls.length - 1];
             useSession.setState({
               messages: [
-                ...messages.slice(0, -1),
+                ...sessionState.messages.slice(0, -1),
                 {
                   ...lastMsg,
                   tool_calls: [
@@ -183,30 +259,42 @@ export default function HomePage() {
             budget: number;
           };
 
-          // Update token usage in real-time
           setTokenUsed(current);
           if (budget) {
             useSession.setState({ tokenBudget: budget });
+          }
+
+          const ctx = useSession.getState().contextWindowData;
+          if (ctx) {
+            const remaining = Math.max(0, ctx.budget.working_budget - current);
+            useSession.setState({
+              contextWindowData: {
+                ...ctx,
+                budget: {
+                  ...ctx.budget,
+                  usage: {
+                    ...ctx.budget.usage,
+                    total_used: current,
+                    total_remaining: remaining,
+                  },
+                },
+              },
+            });
           }
         });
 
         sseManager.on('hil_interrupt', ({ data }) => {
           const interruptData = data as InterruptData;
-
-          // Add timeline event
           addTimelineEvent({
             type: 'hil_interrupt',
             content: `人工介入：${interruptData.tool_name}`,
             toolName: interruptData.tool_name,
           });
 
-          // Show confirm modal
           clearLoadTimeout();
           setLoading(false);
           setCurrentInterrupt(interruptData);
           setShowConfirmModal(true);
-
-          // Pause SSE connection
           sseManager.disconnect();
         });
 
@@ -216,13 +304,11 @@ export default function HomePage() {
             token_usage?: { total: number };
           };
 
-          // Add timeline event
           addTimelineEvent({
             type: 'done',
             content: answer || '任务完成',
           });
 
-          // Update token usage
           if (token_usage?.total) {
             setTokenUsed(token_usage.total);
           }
@@ -234,8 +320,6 @@ export default function HomePage() {
 
         sseManager.on('error', ({ data }) => {
           const { message } = data as { message: string };
-
-          // Add timeline event
           addTimelineEvent({
             type: 'error',
             content: message,
@@ -248,7 +332,6 @@ export default function HomePage() {
         });
       }
     } catch (error) {
-      console.error('Send message error:', error);
       clearLoadTimeout();
       setError(error instanceof Error ? error.message : '发送消息失败');
       setLoading(false);
@@ -258,9 +341,9 @@ export default function HomePage() {
   const handleConfirm = async (interruptId: string) => {
     setShowConfirmModal(false);
     setCurrentInterrupt(null);
+    setLoading(true);
 
     try {
-      // Call /chat/resume endpoint
       const response = await fetch(getChatResumeUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -272,73 +355,81 @@ export default function HomePage() {
         }),
       });
 
-      // Handle resume response as SSE stream
-      const reader = response.body?.getReader();
-      if (reader) {
-        const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = JSON.parse(line.slice(6));
-              // Handle SSE events (hil_resolved, tool_result, done, etc.)
-              if (data.event === 'hil_resolved') {
-                // HIL resolved successfully
-              } else if (data.event === 'done') {
-                setLoading(false);
-                sseManager.disconnect();
-              } else if (data.event === 'error') {
-                setError(data.data.message);
-                setLoading(false);
-              }
-            }
+      await consumeSSEStream(response, ({ event, data }) => {
+        if (event === 'trace_event') {
+          if (isTraceEvent(data)) {
+            addTraceEvent(data);
           }
+          return;
         }
-      }
+
+        if (event === 'tool_result') {
+          addTimelineEvent({
+            type: 'tool_result',
+            content: `HIL 执行结果：${String((data as any).tool_name || '')}`,
+          });
+          return;
+        }
+
+        if (event === 'done') {
+          addTimelineEvent({
+            type: 'done',
+            content: String((data as any).answer || '操作已完成'),
+          });
+          setLoading(false);
+        }
+      });
     } catch (error) {
-      console.error('Confirm error:', error);
       setError(error instanceof Error ? error.message : '确认操作失败');
       setLoading(false);
     }
   };
 
-  const handleCancel = (interruptId: string) => {
+  const handleCancel = async (interruptId: string) => {
     setShowConfirmModal(false);
     setCurrentInterrupt(null);
+    setLoading(true);
 
-    // Call /chat/resume endpoint with approved=false
-    fetch(getChatResumeUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: useSession.getState().sessionId,
-        user_id: useSession.getState().userId,
-        interrupt_id: interruptId,
-        approved: false,
-      }),
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        // Add system message about cancellation
-        addMessage({
-          role: 'assistant',
-          content: data.message || '操作已取消',
-        });
-      })
-      .catch((error) => {
-        console.error('Cancel error:', error);
-        setError('取消操作失败');
+    try {
+      const response = await fetch(getChatResumeUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: useSession.getState().sessionId,
+          user_id: useSession.getState().userId,
+          interrupt_id: interruptId,
+          approved: false,
+        }),
       });
+
+      await consumeSSEStream(response, ({ event, data }) => {
+        if (event === 'trace_event') {
+          if (isTraceEvent(data)) {
+            addTraceEvent(data);
+          }
+          return;
+        }
+
+        if (event === 'done') {
+          addMessage({
+            role: 'assistant',
+            content: String((data as any).answer || '操作已取消'),
+          });
+          addTimelineEvent({
+            type: 'done',
+            content: String((data as any).answer || '操作已取消'),
+          });
+          setLoading(false);
+        }
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '取消操作失败');
+      setLoading(false);
+    }
   };
 
   return (
     <main className="flex h-screen flex-col bg-bg-base text-text-primary">
-      {/* Header */}
       <motion.header
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -352,23 +443,18 @@ export default function HomePage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight">Multi-Tool AI Agent</h1>
-              <p className="text-xs text-text-muted">SSE 流式对话 · ReAct 链路追踪</p>
+              <p className="text-xs text-text-muted">初始化 → Context → ReAct → Memory 全链路可视化</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {/* Token Bar */}
             <TokenBar current={tokenUsed} budget={tokenBudget} />
-            {/* Status */}
             <div className="flex items-center gap-2 rounded-lg border border-border bg-bg-muted px-3 py-1.5">
               <motion.div
                 animate={{ scale: [1, 1.2, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
                 className="h-2 w-2 rounded-full bg-accent"
               />
-              <span
-                className="text-xs font-medium text-text-secondary"
-                data-testid="connection-status"
-              >
+              <span className="text-xs font-medium text-text-secondary" data-testid="connection-status">
                 已连接
               </span>
             </div>
@@ -376,9 +462,7 @@ export default function HomePage() {
         </div>
       </motion.header>
 
-      {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Sessions */}
         <aside className="w-72 border-r border-border bg-bg-alt">
           <div className="p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-text-muted">
@@ -388,11 +472,11 @@ export default function HomePage() {
               <motion.button
                 whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
-                className="w-full rounded-xl border border-border bg-bg-card p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-border-strong"
+                className="w-full rounded-xl border border-border bg-bg-card p-4 text-left shadow-sm transition-all hover:border-border-strong hover:shadow-md"
               >
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-2 rounded-full bg-primary" />
-                  <div className="font-medium text-sm text-text-primary">新对话</div>
+                  <div className="font-medium text-sm text-text-primary">当前会话</div>
                 </div>
                 <div className="mt-2 text-xs text-text-muted flex items-center gap-1">
                   <Clock className="w-3 h-3" />
@@ -403,23 +487,35 @@ export default function HomePage() {
           </div>
         </aside>
 
-        {/* Center - Chat */}
         <section className="flex flex-1 flex-col bg-bg-base">
           <MessageList messages={messages} isLoading={isLoading} />
           <ChatInput onSend={handleSendMessage} disabled={isLoading} />
         </section>
 
-        {/* Right Sidebar - Tool Trace & Timeline */}
-        <aside className="flex w-96 flex-col border-l border-border bg-bg-card">
-          {/* Tab Navigation */}
-          <div className="flex border-b border-border bg-bg-alt">
+        <aside className="flex w-[440px] flex-col border-l border-border bg-bg-card">
+          <div className="grid grid-cols-4 border-b border-border bg-bg-alt">
+            <button
+              onClick={() => setActiveTab('chain')}
+              className={cn(
+                'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
+                activeTab === 'chain' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+              )}
+            >
+              <Activity className="w-4 h-4" />
+              链路
+              {activeTab === 'chain' && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+            </button>
             <button
               onClick={() => setActiveTab('timeline')}
               className={cn(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200 relative',
-                activeTab === 'timeline'
-                  ? 'text-primary'
-                  : 'text-text-muted hover:text-text-secondary'
+                'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
+                activeTab === 'timeline' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
               )}
             >
               <History className="w-4 h-4" />
@@ -433,15 +529,32 @@ export default function HomePage() {
               )}
             </button>
             <button
-              onClick={() => setActiveTab('trace')}
+              onClick={() => setActiveTab('tools')}
               className={cn(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200 relative',
-                activeTab === 'trace' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+                'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
+                activeTab === 'tools' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
               )}
             >
               <Wrench className="w-4 h-4" />
-              工具链路
-              {activeTab === 'trace' && (
+              工具
+              {activeTab === 'tools' && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('context')}
+              className={cn(
+                'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
+                activeTab === 'context' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+              )}
+            >
+              <Layers className="w-4 h-4" />
+              Context
+              {activeTab === 'context' && (
                 <motion.div
                   layoutId="activeTab"
                   className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
@@ -451,7 +564,6 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* Tab Content */}
           <div className="flex-1 overflow-hidden">
             <motion.div
               key={activeTab}
@@ -460,17 +572,24 @@ export default function HomePage() {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              {activeTab === 'timeline' ? (
-                <Timeline events={timelineEvents} />
-              ) : (
-                <ToolCallTrace messages={messages} />
+              {activeTab === 'chain' && (
+                <ExecutionTracePanel traceEvents={traceEvents} slotDetails={slotDetails} />
               )}
+              {activeTab === 'timeline' && <Timeline events={timelineEvents} />}
+              {activeTab === 'tools' && <ToolCallTrace messages={messages} />}
+              {activeTab === 'context' &&
+                (contextWindowData ? (
+                  <ContextWindowPanel data={contextWindowData} />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-text-muted">
+                    暂无 Context 数据，请先发起一次请求
+                  </div>
+                ))}
             </motion.div>
           </div>
         </aside>
       </div>
 
-      {/* HIL Confirm Modal */}
       <ConfirmModal
         isOpen={showConfirmModal}
         interrupt={currentInterrupt}

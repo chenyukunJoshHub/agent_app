@@ -2,13 +2,17 @@
 Session Context API - Token Budget State Endpoint.
 
 P0: GET /session/{session_id}/context endpoint that returns token budget state.
+P1: GET /session/{session_id}/slots endpoint that returns Slot content details.
 """
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from loguru import logger
 
 from app.prompt.budget import DEFAULT_BUDGET
+from app.prompt.builder import get_slot_snapshot
+from app.skills.manager import SkillManager
 
 
 # Response Models
@@ -48,6 +52,29 @@ class ContextResponse(BaseModel):
 
     session_id: str = Field(..., description="Session identifier")
     token_budget: dict[str, Any] = Field(..., description="Token budget state")
+
+
+# =============================================================================
+# Slot Content Models (P1)
+# =============================================================================
+
+class SlotDetail(BaseModel):
+    """Single Slot detail."""
+
+    name: str = Field(..., description="Slot name")
+    display_name: str = Field(..., description="Display name in Chinese")
+    content: str = Field(..., description="Slot content")
+    tokens: int = Field(..., description="Token count")
+    enabled: bool = Field(..., description="Whether slot is enabled")
+
+
+class SlotDetailsResponse(BaseModel):
+    """Slot details response."""
+
+    session_id: str = Field(..., description="Session identifier")
+    slots: list[SlotDetail] = Field(..., description="Slot details")
+    total_tokens: int = Field(..., description="Total tokens")
+    timestamp: float = Field(..., description="Snapshot timestamp")
 
 
 # Router
@@ -106,6 +133,62 @@ async def get_session_context(session_id: str) -> ContextResponse:
         session_id=session_id,
         token_budget=token_budget_state.model_dump(),
     )
+
+
+@router.get("/{session_id}/slots", response_model=SlotDetailsResponse)
+async def get_session_slots(session_id: str) -> SlotDetailsResponse:
+    """
+    Get session Slot content details with token counts.
+
+    P1: Returns actual Slot content and token usage.
+
+    Args:
+        session_id: Session identifier
+
+    Returns:
+        SlotDetailsResponse: Slot details with content and tokens
+    """
+    try:
+        # Get skill snapshot
+        skill_manager = SkillManager.get_instance()
+        skill_snapshot = skill_manager.build_snapshot()
+
+        # Get user profile (episodic memory)
+        # Note: MemoryManager requires DB connection, skip for P0
+        episodic = None
+
+        # Get available tools (hardcoded for P0/P1)
+        available_tools = ["web_search", "send_email", "read_file"]
+
+        # Build Slot snapshot
+        slot_snapshot = get_slot_snapshot(
+            skill_snapshot=skill_snapshot,
+            episodic=episodic,
+            available_tools=available_tools,
+        )
+
+        # Convert to response format
+        slot_details = [
+            SlotDetail(
+                name=slot.name,
+                display_name=slot.display_name,
+                content=slot.content,
+                tokens=slot.tokens,
+                enabled=slot.enabled,
+            )
+            for slot in slot_snapshot.slots.values()
+        ]
+
+        return SlotDetailsResponse(
+            session_id=session_id,
+            slots=slot_details,
+            total_tokens=slot_snapshot.total_tokens,
+            timestamp=slot_snapshot.timestamp,
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting slot details: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 __all__ = ["router"]
