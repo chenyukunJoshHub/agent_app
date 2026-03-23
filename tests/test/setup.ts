@@ -43,3 +43,25 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: vi.fn(),
   })),
 });
+
+// Mock framer-motion to avoid useContext errors
+vi.mock("framer-motion", async () => {
+  const actual = await vi.importActual("framer-motion");
+  return {
+    ...actual,
+    // Use non-animated components for testing
+    motion: {
+      div: "div",
+      span: "span",
+      button: "button",
+      section: "section",
+      article: "article",
+      header: "header",
+      footer: "footer",
+      aside: "aside",
+      main: "main",
+      nav: "nav",
+    },
+    AnimatePresence: ({ children }: { children: any }) => children,
+  };
+});

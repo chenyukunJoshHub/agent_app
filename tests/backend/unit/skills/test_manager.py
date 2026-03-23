@@ -809,3 +809,194 @@ tools: []
         assert len(snapshot.skills) == 1
         assert snapshot.skills[0].name == "normal-skill"
         assert "disabled-skill" not in [s.name for s in snapshot.skills]
+
+
+class TestSkillManagerSingleton:
+    """Test SkillManager singleton pattern."""
+
+    def setup_method(self):
+        """Reset singleton before each test."""
+        SkillManager.reset_instance()
+
+    def teardown_method(self):
+        """Reset singleton after each test."""
+        SkillManager.reset_instance()
+
+    @pytest.fixture
+    def temp_skills_dir(self):
+        """Create a temporary skills directory for testing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / "skills"
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            yield skills_dir
+
+    @pytest.fixture
+    def sample_skill_content(self):
+        """Sample SKILL.md content with valid frontmatter."""
+        return """---
+name: test-skill
+description: Test skill for singleton
+version: 1.0.0
+status: active
+priority: 5
+tools: []
+---
+
+# Test Skill
+
+## Instructions
+
+This is a test skill.
+"""
+
+    def test_get_instance_returns_same_instance(self, temp_skills_dir, sample_skill_content):
+        """验证 get_instance() 返回相同的实例."""
+        # Create a skill file
+        test_dir = temp_skills_dir / "test-skill"
+        test_dir.mkdir()
+        (test_dir / "SKILL.md").write_text(sample_skill_content, encoding="utf-8")
+
+        # Get instance twice
+        manager1 = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+        manager2 = SkillManager.get_instance()
+
+        # Assert same instance
+        assert manager1 is manager2
+        assert id(manager1) == id(manager2)
+
+    def test_get_instance_requires_skills_dir_on_first_call(self):
+        """验证首次调用 get_instance() 必须提供 skills_dir."""
+        # Reset to ensure clean state
+        SkillManager.reset_instance()
+
+        # Assert raises ValueError
+        with pytest.raises(ValueError, match="skills_dir is required"):
+            SkillManager.get_instance()
+
+    def test_get_instance_ignores_subsequent_skills_dir(self, temp_skills_dir, sample_skill_content):
+        """验证后续调用 get_instance() 忽略 skills_dir 参数."""
+        # Create a skill file
+        test_dir = temp_skills_dir / "test-skill"
+        test_dir.mkdir()
+        (test_dir / "SKILL.md").write_text(sample_skill_content, encoding="utf-8")
+
+        # Get instance with skills_dir
+        manager1 = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+
+        # Get instance again with different skills_dir (should be ignored)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager2 = SkillManager.get_instance(skills_dir=tmpdir)
+
+        # Assert same instance
+        assert manager1 is manager2
+        assert manager1.skills_dir == manager2.skills_dir
+
+    def test_get_instance_accepts_max_prompt_chars_on_first_call(self, temp_skills_dir):
+        """验证首次调用 get_instance() 可以设置 max_prompt_chars."""
+        # Get instance with custom max_prompt_chars
+        manager = SkillManager.get_instance(
+            skills_dir=str(temp_skills_dir), max_prompt_chars=10_000
+        )
+
+        # Assert custom value is set
+        assert manager._max_prompt_chars == 10_000
+
+    def test_get_instance_ignores_subsequent_max_prompt_chars(self, temp_skills_dir):
+        """验证后续调用 get_instance() 忽略 max_prompt_chars 参数."""
+        # Get instance with custom max_prompt_chars
+        manager1 = SkillManager.get_instance(
+            skills_dir=str(temp_skills_dir), max_prompt_chars=10_000
+        )
+
+        # Get instance again with different max_prompt_chars (should be ignored)
+        manager2 = SkillManager.get_instance(max_prompt_chars=20_000)
+
+        # Assert same instance with original value
+        assert manager1 is manager2
+        assert manager2._max_prompt_chars == 10_000
+
+    def test_reset_instance_clears_singleton(self, temp_skills_dir):
+        """验证 reset_instance() 清除单例实例."""
+        # Get instance
+        manager1 = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+
+        # Reset
+        SkillManager.reset_instance()
+
+        # Get new instance (should be different)
+        manager2 = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+
+        # Assert different instances
+        assert manager1 is not manager2
+        assert id(manager1) != id(manager2)
+
+    def test_singleton_is_thread_safe(self, temp_skills_dir, sample_skill_content):
+        """验证单例模式是线程安全的."""
+        import threading
+
+        # Create a skill file
+        test_dir = temp_skills_dir / "test-skill"
+        test_dir.mkdir()
+        (test_dir / "SKILL.md").write_text(sample_skill_content, encoding="utf-8")
+
+        # Container for results
+        instances = []
+        lock = threading.Lock()
+
+        def get_instance():
+            instance = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+            with lock:
+                instances.append(instance)
+
+        # Create multiple threads
+        threads = []
+        for _ in range(10):
+            thread = threading.Thread(target=get_instance)
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads
+        for thread in threads:
+            thread.join()
+
+        # Assert all threads got the same instance
+        first_instance = instances[0]
+        for instance in instances[1:]:
+            assert instance is first_instance
+
+    def test_singleton_state_is_shared(self, temp_skills_dir, sample_skill_content):
+        """验证单例实例的状态在多次调用间共享."""
+        # Create a skill file
+        test_dir = temp_skills_dir / "test-skill"
+        test_dir.mkdir()
+        (test_dir / "SKILL.md").write_text(sample_skill_content, encoding="utf-8")
+
+        # Get instance and build snapshot
+        manager1 = SkillManager.get_instance(skills_dir=str(temp_skills_dir))
+        snapshot1 = manager1.build_snapshot()
+
+        # Get instance again and build another snapshot
+        manager2 = SkillManager.get_instance()
+        snapshot2 = manager2.build_snapshot()
+
+        # Assert version is incremented (same instance)
+        assert snapshot2.version == snapshot1.version + 1
+
+    def test_reset_instance_allows_reinitialization(self, temp_skills_dir):
+        """验证 reset_instance() 允许重新初始化."""
+        # Get instance with custom max_prompt_chars
+        manager1 = SkillManager.get_instance(
+            skills_dir=str(temp_skills_dir), max_prompt_chars=10_000
+        )
+
+        # Reset
+        SkillManager.reset_instance()
+
+        # Get new instance with different max_prompt_chars
+        manager2 = SkillManager.get_instance(
+            skills_dir=str(temp_skills_dir), max_prompt_chars=20_000
+        )
+
+        # Assert new instance has new value
+        assert manager2._max_prompt_chars == 20_000
+        assert manager1 is not manager2

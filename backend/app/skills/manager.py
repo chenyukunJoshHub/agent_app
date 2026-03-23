@@ -33,6 +33,8 @@ class SkillManager:
 
     线程安全：build_snapshot() 使用 threading.Lock 保护版本号递增。
 
+    单例模式：使用 get_instance() 获取全局唯一实例。
+
     Attributes:
         skills_dir: Skills 目录路径（绝对路径）
         _version: 当前快照版本号（文件变更时递增）
@@ -43,9 +45,16 @@ class SkillManager:
     # 字符预算上限（参考：docs/arch/skill-v3.md §1.8）
     MAX_SKILLS_PROMPT_CHARS = 30_000
 
+    # 单例实例
+    _instance: "SkillManager | None" = None
+    _instance_lock = threading.Lock()
+
     def __init__(self, skills_dir: str, max_prompt_chars: int | None = None):
         """
         初始化 SkillManager.
+
+        注意：请使用 get_instance() 类方法获取单例实例，
+        直接构造函数将创建独立实例（主要用于测试）。
 
         Args:
             skills_dir: Skills 目录路径（可以是相对或绝对路径）
@@ -55,6 +64,67 @@ class SkillManager:
         self._version: int = 0
         self._lock: threading.Lock = threading.Lock()
         self._max_prompt_chars = max_prompt_chars or self.MAX_SKILLS_PROMPT_CHARS
+
+    @classmethod
+    def get_instance(
+        cls,
+        skills_dir: str | None = None,
+        max_prompt_chars: int | None = None,
+    ) -> "SkillManager":
+        """
+        获取 SkillManager 单例实例.
+
+        线程安全的单例创建，使用双重检查锁定模式。
+
+        Args:
+            skills_dir: Skills 目录路径（首次创建时必需，后续调用可省略）
+            max_prompt_chars: 可选的字符预算上限（仅在首次创建时生效）
+
+        Returns:
+            SkillManager 单例实例
+
+        Raises:
+            ValueError: 首次创建时未提供 skills_dir
+
+        Example:
+            >>> manager = SkillManager.get_instance(skills_dir="skills/")
+            >>> snapshot = manager.build_snapshot()
+            >>> # 后续调用可直接获取实例
+            >>> same_manager = SkillManager.get_instance()
+        """
+        # 第一次检查（快速路径，无锁）
+        if cls._instance is not None:
+            return cls._instance
+
+        # 加锁创建
+        with cls._instance_lock:
+            # 第二次检查（防止竞争条件下重复创建）
+            if cls._instance is not None:
+                return cls._instance
+
+            # 首次创建，必须提供 skills_dir
+            if skills_dir is None:
+                raise ValueError(
+                    "skills_dir is required for first-time SkillManager initialization"
+                )
+
+            cls._instance = cls(skills_dir=skills_dir, max_prompt_chars=max_prompt_chars)
+            return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """
+        重置单例实例.
+
+        主要用于测试场景，确保每个测试获得干净的实例。
+        生产环境中应谨慎使用。
+
+        Example:
+            >>> SkillManager.reset_instance()
+            >>> manager = SkillManager.get_instance(skills_dir="test_skills/")
+        """
+        with cls._instance_lock:
+            cls._instance = None
 
     def scan(self) -> list[SkillDefinition]:
         """
