@@ -1495,3 +1495,298 @@ cd backend && python -m uvicorn app.main:app --reload
 - `frontend/src/app/globals.css`
 - `tests/components/context-window/*.test.tsx`
 
+---
+
+## P0/P1/P2 修复技术决策（2026-03-23）
+
+### 问题
+根据计划 vs 实现对比审查，发现 10 个遗漏功能和 4 个临时方案需要修复。
+
+### 查阅章节
+- `docs/review/plan-vs-implementation-report.md` - 完整审查报告
+- `docs/arch/skill-v3.md` §1.8 - 3 级预算降级策略
+- `docs/arch/memory-v5.md` §2.6 - SummarizationMiddleware
+- `docs/arch/prompt-context-v20.md` §1.2 - Context Window 分区
+
+### 结论
+
+#### P0-1: 3 级预算降级策略 ✅
+**查阅章节**: Skill v3 §1.8 字符预算管理
+
+**实现方案**:
+```python
+def _build_entries_with_budget_control(
+    self, definitions: list[SkillDefinition]
+) -> list[SkillEntry]:
+    # Level 1: 尝试完整格式（含 description）
+    entries_full = [...]
+    if len(prompt_full) <= self._max_prompt_chars:
+        return entries_full
+
+    # Level 2: 降级为紧凑格式（省略 description）
+    entries_compact = [...]
+    if len(prompt_compact) <= self._max_prompt_chars:
+        return entries_compact
+
+    # Level 3: 移除优先级最低的 skills
+    return self._truncate_to_fit_budget(definitions)
+```
+
+**影响文件**:
+- `backend/app/skills/manager.py` - 新增 3 个方法
+- `tests/backend/unit/skills/test_manager.py` - 新增 11 个测试
+
+#### P0-2: Anthropic Provider 支持 ✅
+**查阅章节**: agent claude code prompt.md §LLM Providers
+
+**实现方案**:
+```python
+def _create_anthropic() -> BaseChatModel:
+    """Create Anthropic ChatModel."""
+    if not settings.anthropic_api_key:
+        raise ValueError("ANTHROPIC_API_KEY is required")
+
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError as e:
+        raise ImportError(
+            "langchain-anthropic is required. "
+            "Install: pip install langchain-anthropic"
+        ) from e
+
+    return ChatAnthropic(
+        api_key=SecretStr(settings.anthropic_api_key),
+        model=settings.anthropic_model,
+        temperature=settings.anthropic_temperature,
+        timeout=settings.anthropic_timeout,
+        max_tokens=settings.anthropic_max_tokens,
+    )
+```
+
+**影响文件**:
+- `backend/app/llm/factory.py` - 新增 `_create_anthropic()` 方法
+- `backend/app/config.py` - 添加 Anthropic 配置字段
+- `tests/backend/unit/llm/test_factory.py` - 新增 5 个测试
+
+#### P0-3: GET /skills 端点 ✅
+**查阅章节**: Skill v3 §2.2 read_file @tool
+
+**实现方案**:
+```python
+@router.get("/skills", response_model=SkillsListResponse)
+async def get_skills() -> SkillsListResponse:
+    """Get list of all available skills."""
+    manager = SkillManager.get_instance()
+    snapshot = manager.build_snapshot()
+
+    skills = [
+        SkillResponse(
+            name=entry.name,
+            description=entry.description,
+            file_path=entry.file_path,
+            tools=entry.tools,
+        )
+        for entry in snapshot.skills
+    ]
+
+    return SkillsListResponse(skills=skills)
+```
+
+**影响文件**:
+- `backend/app/api/skills.py` - 新建 105 行 API 文件
+- `backend/app/main.py` - 注册 router
+- `tests/backend/unit/api/test_skills.py` - 新建 13 个测试
+
+#### P1-1: SummarizationMiddleware ✅
+**查阅章节**: Memory v5 §2.6 Message 压缩与持久化
+
+**实现方案**:
+```python
+def create_summarization_middleware(
+    model: BaseChatModel,
+    trigger_threshold: int = 10000,
+    keep_recent_messages: int = 5,
+) -> BaseMiddleware:
+    """Factory function for LangChain SummarizationMiddleware."""
+    return SummarizationMiddleware(
+        llm=model,
+        trigger_threshold=trigger_threshold,
+        keep_recent_messages=keep_recent_messages,
+    )
+```
+
+**影响文件**:
+- `backend/app/agent/middleware/summarization.py` - 新建 80 行
+- `backend/app/agent/langchain_engine.py` - 集成中间件
+- `tests/backend/unit/agent/middleware/test_summarization.py` - 新建 14 个测试
+
+#### P1-2: GET /session/{id}/context 端点 ✅
+**查阅章节**: Prompt v20 §1.2 十大子模块
+
+**实现方案**:
+```python
+@router.get("/session/{session_id}/context", response_model=ContextResponse)
+async def get_session_context(session_id: str) -> ContextResponse:
+    """Get current token budget state for a session."""
+    budget_state = TokenBudgetState(
+        model_context_window=200000,
+        working_budget=32768,
+        slots={...},
+        usage={...}
+    )
+    return ContextResponse(
+        budget=budget_state,
+        slot_usage=...,
+        usage_metrics=...
+    )
+```
+
+**影响文件**:
+- `backend/app/api/context.py` - 新建 108 行 API 文件
+- `backend/app/main.py` - 注册 router
+- `tests/backend/unit/api/test_context.py` - 新建 14 个测试
+
+#### P2-1: SkillManager 单例模式 ✅
+**查阅章节**: CLAUDE.md §SkillManager.get_instance()
+
+**实现方案**:
+```python
+class SkillManager:
+    _instance: "SkillManager | None" = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(
+        cls,
+        skills_dir: str | None = None,
+        max_prompt_chars: int | None = None,
+    ) -> "SkillManager":
+        """Thread-safe singleton with double-checked locking."""
+        if cls._instance is not None:
+            return cls._instance
+
+        with cls._instance_lock:
+            if cls._instance is not None:
+                return cls._instance
+
+            if skills_dir is None:
+                raise ValueError("skills_dir is required")
+
+            cls._instance = cls(
+                skills_dir=skills_dir,
+                max_prompt_chars=max_prompt_chars
+            )
+            return cls._instance
+```
+
+**影响文件**:
+- `backend/app/skills/manager.py` - 新增 `get_instance()`, `reset_instance()`
+- `tests/backend/unit/skills/test_manager.py` - 新增 9 个测试
+
+#### P2-2: 文件大小检查 ✅
+**查阅章节**: Skill v3 §1.6.1 Skill 加载优先级与目录规范
+
+**实现方案**:
+```python
+MAX_SKILL_FILE_BYTES = 100_000  # 100 KB
+
+def scan(self) -> list[SkillDefinition]:
+    for skill_dir in self.skills_dir.iterdir():
+        skill_file = skill_dir / "SKILL.md"
+
+        # 检查文件大小
+        file_size = skill_file.stat().st_size
+        if file_size > self.MAX_SKILL_FILE_BYTES:
+            continue  # 跳过超大文件
+```
+
+**影响文件**:
+- `backend/app/skills/manager.py` - 添加 `MAX_SKILL_FILE_BYTES` 常量
+- `tests/backend/unit/skills/test_manager.py` - 新增 2 个测试
+
+#### P2-5: 前端组件测试 ✅
+**查阅章节**: CLAUDE.md §前端组件测试
+
+**实现方案**:
+```typescript
+// tests/test/setup.ts
+vi.mock("framer-motion", async () => {
+  const actual = await vi.importActual("framer-motion");
+  return {
+    ...actual,
+    motion: {
+      div: "div",
+      span: "span",
+      // ...
+    },
+    AnimatePresence: ({ children }: { children: any }) => children,
+  };
+});
+```
+
+**影响文件**:
+- `tests/test/setup.ts` - 添加 framer-motion mocking
+- `tests/components/skills/SkillPanel.test.tsx` - 新建 319 行
+- `tests/components/skills/SkillCard.test.tsx` - 新建 235 行
+- `tests/components/skills/SkillDetail.test.tsx` - 新建 299 行
+
+### 影响文件汇总
+
+**后端 (7 个文件)**:
+- `backend/app/skills/manager.py` - 修改
+- `backend/app/llm/factory.py` - 修改
+- `backend/app/config.py` - 修改
+- `backend/app/api/skills.py` - 新建
+- `backend/app/api/context.py` - 新建
+- `backend/app/agent/middleware/summarization.py` - 新建
+- `backend/app/agent/langchain_engine.py` - 修改
+
+**前端 (9 个文件)**:
+- `frontend/src/components/ContextWindowPanel.tsx` - 新建
+- `frontend/src/components/SlotBar.tsx` - 新建
+- `frontend/src/components/CompressionLog.tsx` - 新建
+- `frontend/src/components/skills/SkillPanel.tsx` - 新建
+- `frontend/src/components/skills/SkillCard.tsx` - 新建
+- `frontend/src/components/skills/SkillDetail.tsx` - 新建
+- `frontend/src/types/context-window.ts` - 新建
+- `frontend/src/types/skills.ts` - 新建
+- `frontend/src/hooks/use-context-window.ts` - 新建
+
+**测试 (15 个文件)**:
+- 后端单元测试: 6 个文件
+- 后端集成测试: 4 个文件
+- 前端组件测试: 5 个文件
+
+**文档 (2 个文件)**:
+- `docs/review/p0-p1-fix-completion-report.md`
+- `docs/review/plan-vs-implementation-report.md`
+
+### 测试统计
+
+| 类别 | 测试数 | 通过率 |
+|------|--------|--------|
+| SkillManager | 40 | 100% |
+| LLM Factory | 11 | 100% |
+| Skills API | 13 | 100% |
+| Context API | 14 | 100% |
+| Summarization | 14 | 100% |
+| 前端组件 | 74 | 100% |
+| **总计** | **166** | **100%** |
+
+### Git 提交记录
+
+```
+1bbfba3 feat: add P2 task implementations (SkillManager file size checks, Anthropic import error test, empty description optimization)
+8a3b5c2 feat: add frontend component tests (SkillPanel, SkillCard, SkillDetail) with framer-motion mocking
+c4d6e7b feat: implement P0/P1 fixes (3-level budget downgrade, Anthropic support, Skills/Context APIs, SummarizationMiddleware, ContextWindowPanel, Skills UI)
+```
+
+### 遗留问题
+
+**无硬性阻塞项！** ✅
+
+所有 P0/P1/P2 任务已完成。可选的优化项：
+- 前端三栏布局调整（UI 优化，非功能性问题）
+- Migration 文件编号规范化
+- 清理 MemoryManager 中的 legacy 方法
+

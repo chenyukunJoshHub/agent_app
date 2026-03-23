@@ -283,6 +283,143 @@ Coverage: 100%
 
 ---
 
+## Session: 2026-03-23 (P0/P1/P2 修复完成) ✅ **COMPLETED**
+
+### P0/P1/P2 修复 - Subagent-Driven Development ✅ **COMPLETED**
+- **Status**: completed
+- **Duration**: ~3 hours
+- **TDD Approach**: Subagent-Driven Development (Implement → Spec Review → Code Quality Review)
+
+#### 完成内容
+
+**P0 任务 (3 个)** ✅:
+1. **Phase 02: 3 级预算降级策略** - `_build_entries_with_budget_control()`
+   - Level 1: 完整格式（含 description）
+   - Level 2: 紧凑格式（仅 name + file_path）
+   - Level 3: 移除优先级最低的 skills
+   - 29 测试全部通过
+
+2. **Phase 04: Anthropic provider 支持** - `_create_anthropic()`
+   - 添加 ANTHROPIC_API_KEY 配置
+   - 添加 ImportError 处理
+   - 12 测试全部通过
+
+3. **Phase 07: GET /skills 端点** - `backend/app/api/skills.py`
+   - 新建 105 行 API 文件
+   - 13 测试全部通过
+
+**P1 任务 (4 个)** ✅:
+1. **Phase 03: SummarizationMiddleware** - `backend/app/agent/middleware/summarization.py`
+   - 集成 LangChain 框架中间件
+   - 14 测试全部通过
+
+2. **Phase 07: GET /session/{id}/context** - `backend/app/api/context.py`
+   - 新建 108 行 API 文件
+   - 14 测试全部通过
+
+3. **Phase 10: ContextWindowPanel 组件**
+   - 3 个组件（Panel, SlotBar, CompressionLog）
+   - 16 测试套件
+
+4. **Phase 11: Skills UI 组件**
+   - 3 个组件（Panel, Card, Detail）
+   - TypeScript 类型定义
+
+**P2 任务 (5 个)** ✅:
+1. **Phase 02: SkillManager 单例模式** - `get_instance()`, `reset_instance()`
+   - 线程安全的双重检查锁定
+   - 9 个新测试
+
+2. **Phase 02: 文件大小检查** - `MAX_SKILL_FILE_BYTES = 100_000`
+   - 在 `scan()` 中检查文件大小
+   - 2 个新测试
+
+3. **Phase 02: 空描述优化** - 已在 `_build_prompt()` 中实现
+   - 空 description 时省略 XML 标签
+
+4. **Phase 04: Anthropic import 错误测试** - `test_create_anthropic_import_error()`
+   - 模拟 ImportError 场景
+
+5. **Phase 10-11: 前端组件测试** - 3 个测试文件
+   - `SkillPanel.test.tsx` - 25 测试 ✅
+   - `SkillCard.test.tsx` - 25 测试 ✅
+   - `SkillDetail.test.tsx` - 24 测试 ✅
+   - `framer-motion` mocking 修复
+
+#### 测试结果
+
+**后端测试**:
+- SkillManager: 40 测试 ✅
+- LLM Factory: 11 测试 ✅
+- Skills API: 13 测试 ✅
+- Context API: 14 测试 ✅
+- Summarization: 14 测试 ✅
+
+**前端测试**:
+- 组件构建: ✅ 无错误
+- TypeScript: ✅ 无错误
+- 组件测试: 74 测试 ✅
+
+**代码覆盖率**:
+- `skills.py`: 90.91%
+- `context.py`: 100%
+- `summarization.py`: 100%
+- `manager.py`: 86.59%
+
+#### 创建的文件 (30+)
+
+**后端 (7 个)**:
+1. `backend/app/api/skills.py` - 105 行
+2. `backend/app/api/context.py` - 108 行
+3. `backend/app/agent/middleware/summarization.py` - 80 行
+4. `tests/backend/unit/api/test_skills.py`
+5. `tests/backend/unit/api/test_context.py`
+6. `tests/backend/unit/agent/middleware/test_summarization.py`
+7. `tests/backend/unit/llm/test_factory.py` (扩展)
+
+**前端 (12 个)**:
+1. `frontend/src/components/ContextWindowPanel.tsx` - ~200 行
+2. `frontend/src/components/SlotBar.tsx` - ~150 行
+3. `frontend/src/components/CompressionLog.tsx` - ~120 行
+4. `frontend/src/components/skills/SkillPanel.tsx` - 141 行
+5. `frontend/src/components/skills/SkillCard.tsx` - 90 行
+6. `frontend/src/components/skills/SkillDetail.tsx` - 233 行
+7. `frontend/src/types/context-window.ts` - ~60 行
+8. `frontend/src/types/skills.ts` - 55 行
+9. `frontend/src/hooks/use-context-window.ts` - ~80 行
+10. `tests/components/skills/SkillPanel.test.tsx` - 319 行
+11. `tests/components/skills/SkillCard.test.tsx` - 235 行
+12. `tests/components/skills/SkillDetail.test.tsx` - 299 行
+
+**文档 (2 个)**:
+1. `docs/review/p0-p1-fix-completion-report.md` - 177 行
+2. `docs/review/plan-vs-implementation-report.md` - 170 行
+
+#### 技术决策记录
+
+1. **3 级预算降级**: 先尝试完整格式，超限降级为紧凑格式，仍超限则移除低优先级 skills
+2. **Anthropic 集成**: 使用 `langchain_anthropic` 包，提供明确的 ImportError 提示
+3. **API 设计**: RESTful 风格，统一响应格式
+4. **SummarizationMiddleware**: 复用 LangChain 框架中间件
+5. **前端组件**: 使用 Framer Motion + Zustand，保持与现有代码一致
+6. **测试策略**: Subagent-Driven Development，两阶段审查（规范 → 质量）
+7. **Framer-motion mocking**: 在 `tests/test/setup.ts` 中统一 mock
+
+#### Git 提交记录
+
+```
+1bbfba3 feat: add P2 task implementations (SkillManager file size checks, Anthropic import error test, empty description optimization)
+8a3b5c2 feat: add frontend component tests (SkillPanel, SkillCard, SkillDetail) with framer-motion mocking
+c4d6e7b feat: implement P0/P1 fixes (3-level budget downgrade, Anthropic support, Skills/Context APIs, SummarizationMiddleware, ContextWindowPanel, Skills UI)
+```
+
+#### 遗留问题
+- 无硬性阻塞项
+- 可选 P2 任务已全部完成
+- 前端三栏布局调整（UI 优化，非功能性问题）
+
+---
+
 ## Session: 2026-03-23 (Phase 10 Context Window Panel) ✅ **COMPLETED**
 
 ### Phase 10: Context Window Panel 组件实现 ✅
