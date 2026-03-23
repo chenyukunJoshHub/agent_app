@@ -9,12 +9,13 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from '@/store/use-session';
-import { getSessionContextUrl } from '@/lib/api-config';
+import { getSessionContextUrl, getSessionSlotsUrl } from '@/lib/api-config';
 import type {
   ContextWindowData,
   SlotUsage,
   TokenBudgetState,
   SlotAllocation,
+  SlotDetail,
 } from '@/types/context-window';
 import { SLOT_COLORS, SLOT_DISPLAY_NAMES } from '@/types/context-window';
 
@@ -22,15 +23,13 @@ import { SLOT_COLORS, SLOT_DISPLAY_NAMES } from '@/types/context-window';
  * Convert backend slot allocation to frontend slot usage
  */
 function convertToSlotUsage(slots: SlotAllocation): SlotUsage[] {
-  return (Object.entries(slots) as [keyof SlotAllocation, number][]).map(
-    ([name, allocated]) => ({
-      name,
-      displayName: SLOT_DISPLAY_NAMES[name],
-      allocated,
-      used: 0, // P0: No actual usage tracking yet
-      color: SLOT_COLORS[name],
-    })
-  );
+  return (Object.entries(slots) as [keyof SlotAllocation, number][]).map(([name, allocated]) => ({
+    name,
+    displayName: SLOT_DISPLAY_NAMES[name],
+    allocated,
+    used: 0, // P0: No actual usage tracking yet
+    color: SLOT_COLORS[name],
+  }));
 }
 
 /**
@@ -58,6 +57,21 @@ async function fetchContextData(sessionId: string): Promise<ContextWindowData> {
 }
 
 /**
+ * Fetch slot details from backend API
+ */
+async function fetchSlotDetails(sessionId: string): Promise<SlotDetail[]> {
+  const url = getSessionSlotsUrl(sessionId);
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch slot details: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.slots;
+}
+
+/**
  * useContextWindow Hook
  *
  * Provides Context Window data and update functions.
@@ -66,6 +80,7 @@ async function fetchContextData(sessionId: string): Promise<ContextWindowData> {
 export function useContextWindow() {
   const { sessionId } = useSession();
   const [data, setData] = useState<ContextWindowData | null>(null);
+  const [slotDetails, setSlotDetails] = useState<SlotDetail[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,6 +101,20 @@ export function useContextWindow() {
       console.error('[useContextWindow] Fetch error:', err);
     } finally {
       setIsLoading(false);
+    }
+  }, [sessionId]);
+
+  /**
+   * Fetch slot details
+   */
+  const fetchSlotDetailsData = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      const details = await fetchSlotDetails(sessionId);
+      setSlotDetails(details);
+    } catch (err) {
+      console.error('[useContextWindow] Fetch slot details error:', err);
     }
   }, [sessionId]);
 
@@ -166,9 +195,11 @@ export function useContextWindow() {
 
   return {
     data,
+    slotDetails,
     isLoading,
     error,
     refetch: fetchContext,
+    fetchSlotDetails: fetchSlotDetailsData,
     updateSlotUsage,
     addCompressionEvent,
     updateTotalUsage,

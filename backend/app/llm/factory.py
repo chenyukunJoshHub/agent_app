@@ -63,6 +63,9 @@ def _create_ollama() -> ChatOllama:
         model=settings.ollama_model,
         temperature=settings.ollama_temperature,
         client_kwargs={"timeout": settings.ollama_timeout},
+        # Add profile for summarization middleware (context window size)
+        # Typical values: glm4=128k, qwen3.5=32k
+        profile={"max_input_tokens": 128000},
     )
 
 

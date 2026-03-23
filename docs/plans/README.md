@@ -18,17 +18,20 @@
 | 10 | plan-phase10-context-window.md | frontend/components/context-window/ | Prompt v20 §1.2 | ✅ done |
 | 11 | plan-phase11-skills-ui.md | frontend/components/skills/ | Skill v3 §1.6 | ✅ done |
 | 12 | plan-phase12-hil.md | frontend/components/hil/ | Agent v13 §1.13 | ✅ done |
-| 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — | 🔄 in_progress |
+| 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — | ✅ done |
+| 14 | plan-phase14-slot-token-stats.md | backend/prompt/slot_tracker.py + frontend/ | Prompt v20 §1.2 | ✅ done |
 
 ## 当前状态
 
 **最后更新**: 2026-03-23
 
-**进行中**: Phase 13 - E2E 测试
+**当前阶段**: Phase 14 - Slot Token 实时统计功能 ✅ **COMPLETED**
+
+**所有核心功能已完成！** ✅
 
 **阻塞项**: 无
 
-**下一阶段**: 完成所有 E2E 测试后进行集成验证
+**下一阶段**: 生产准备（性能优化、安全加固、CI/CD 配置）
 
 ---
 
@@ -115,6 +118,14 @@
 - skills.spec.ts
 - hil.spec.ts
 - Playwright headed 模式配置
+
+### Phase 14: Slot Token 实时统计
+- SlotContentTracker 类（10 个 Slot 跟踪）
+- build_system_prompt Slot 跟踪增强
+- GET /session/{id}/slots API 端点
+- SlotDetail 前端组件（可展开/折叠）
+- ContextWindowPanel 详情视图
+- 63 个测试（后端 27 + 前端 15 + API 10 + E2E 11）
 
 ---
 
