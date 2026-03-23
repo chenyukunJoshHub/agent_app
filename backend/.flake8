@@ -1,0 +1,34 @@
+[flake8]
+# 最大行长度（与 Black 一致）
+max-line-length = 88
+
+# 忽略的目录和文件
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    env,
+    build,
+    dist,
+    *.egg-info
+
+# 忽略的错误码
+ignore =
+    # E203: 空格前的冒号（与 Black 冲突）
+    E203
+    # W503: 二元运算符前换行（与 Black 冲突）
+    W503
+    # E501: 行过长（由 Black 处理）
+    E501
+
+# 启用的额外检查
+extend-ignore =
+    # 允许 TODO 注释
+    W503
+
+# 每行最大复杂度
+max-complexity = 10
+
+# docstring 相关
+docstring-convention = google

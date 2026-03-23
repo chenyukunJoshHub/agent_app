@@ -1,513 +1,456 @@
-# CLAUDE.md · Multi-Tool AI Agent 项目约定
+# CLAUDE.md — Agent Project Working Rules
 
-> Claude Code 每次启动自动读取本文件。
-> **开始任何任务前，必须先完整阅读本文件。**
-> 遇到本文件与其他文档冲突时，以本文件为准。
-
----
-
-## 项目简介
-
-一个基于 LangChain 1.0 + LangGraph 1.0 的多工具 AI Agent。
-支持 ReAct 推理、工具调用、多轮对话（Short Memory）、SSE 流式输出、HIL 人工介入。
-
-参考文档（按优先级）：
-- 总架构设计：`docs/Multi-Tool AI Agent 完整架构设计文档 v13`
-- agent skills 架构设计：`docs/agent skills.md`
-- memory 架构设计：`docs/Memory 模块架构设计文档 v5.md`
-- Prompt+context 架构设计：`docs/Prompt + Context 模块完整设计文档.md`
-- 总计划：`docs/superpowers/specs/2026-03-20-multi-tool-agent-design.md`
-- 后端实施：`docs/implementation/backend-implementation-plan.md`（⚠️ 部分代码模板有错误，见下方纠正）
-- 数据库设计：`docs/implementation/database-implementation-plan.md`
-- 测试策略：`docs/implementation/testing-strategy.md`
-- 部署方案：`docs/implementation/2026-03-20-deployment-implementation-plan.md`
-- 前端实施：`docs/implementation/frontend-implementation-plan.md`
-- 产品方案：`docs/implementation/product-requirements.md`
+> 本文件是 Claude Code 的强制工作规范。每次会话开始前必须读取，每次操作前必须遵守。
+> 违反任何规则前，必须先明确说明原因并请求确认。
 
 ---
 
-## 技术栈（精确版本）
+## 核心原则（按优先级排序）
 
-```
-Python          3.11+
-FastAPI         0.115+
-langchain       1.x（最新稳定版）
-langgraph       1.x（最新稳定版）
-langgraph-checkpoint-postgres  最新稳定版
-psycopg         3.x            ⚠️ 不是 psycopg2，不是 asyncpg
-psycopg-pool    3.x
-PostgreSQL      16+（Docker）
-Node.js         20+
-Next.js         14+
-Zustand         4.x（前端状态管理）
-```
+1. **遇到问题，先查架构文档**
+2. **所有功能，先写测试**
+3. **所有进度，实时更新计划文件**
 
 ---
 
-## 当前阶段目标：🔴 P0 Only
+## 规则一：遇到问题必须参考架构文档
 
-**只实现 P0 范围，不超前实现 P1 / P2 功能。**
+### 触发条件
 
-### P0 验收标准
+以下任何情况发生时，**立即停止编码**，先查阅对应架构文档：
+
+- 不确定某个模块应该如何设计
+- 遇到 API 选型问题（LangChain / LangGraph / psycopg3 等）
+- 不确定某个概念的归属（Memory vs Prompt vs Skill）
+- 遇到两种实现方案难以抉择
+- 发现当前实现与预期行为不符
+
+### 架构文档索引
+
+| 文档 | 路径 | 覆盖范围 |
+|------|------|----------|
+| Multi-Tool AI Agent v13 | `docs/arch/agent-v13.md` | 整体架构、HIL、SSE、部署范式 |
+| Memory 模块 v5 | `docs/arch/memory-v5.md` | 三层记忆、Middleware、checkpointer、store API |
+| Prompt + Context v20 | `docs/arch/prompt-context-v20.md` | 10 个 Slot、Token 预算、组装时序 |
+| Agent Skill v3 | `docs/arch/skill-v3.md` | SkillManager、Skill Protocol、激活机制 |
+
+### 查阅流程
 
 ```
-1. 用户发消息 → Agent 调用 web_search → SSE 流式返回推理过程和结果
-2. 第二轮对话能记住第一轮内容（Short Memory 跑通）
-3. 前端能展示工具调用链路（工具名 / 入参 / 结果）
+遇到问题
+  → 1. 识别问题属于哪个模块（Agent / Memory / Prompt / Skill）
+  → 2. 打开对应架构文档的相关章节
+  → 3. 找到设计决策和实现约束
+  → 4. 按文档设计实现，不自由发挥
+  → 5. 在 findings.md 记录查阅结论
 ```
 
-### P0 实现步骤（按顺序，不跳步）
+### 禁止行为
 
-```
-Step 1   Docker + PostgreSQL 启动，数据库连接验证
-Step 2   config.py + .env 配通一个 LLM Provider（优先 DeepSeek，其次 Ollama）
-Step 3   db/postgres.py：AsyncPostgresSaver + AsyncPostgresStore 初始化
-Step 4   llm/factory.py：单 Provider 版本，不实现 Fallback
-Step 5   tools/search.py：web_search（Tavily）
-Step 6   agent/middleware/memory.py：MemoryMiddleware（P0 版，after_agent 空操作）
-Step 7   agent/middleware/trace.py：TraceMiddleware（after_model 推送 SSE）
-Step 8   agent/langchain_engine.py：create_agent 组装
-Step 9   agent/finish_handler.py：finish_reason 处理
-Step 10  api/chat.py + main.py：POST /chat SSE 接口
-Step 11  前端对话界面 + SSE 流式渲染 + 工具调用链路展示
-```
-
-每个 Step 完成后运行对应验收命令，通过后再进入下一步。
+- ❌ 凭直觉或经验猜测 API 用法，必须先查文档
+- ❌ 发现架构文档与当前实现冲突时，以"能跑就行"为由跳过
+- ❌ 使用架构文档中明确标注 deprecated 的 API（如 asyncpg、create_react_agent）
+- ❌ 在未查阅文档的情况下自行设计架构文档已覆盖的模块
 
 ---
 
-## ✅ 已验证可用的核心 API
+## 规则二：强制 TDD — 测试驱动开发
 
-以下 API 经过人工验证，直接使用，不要替换：
+### 核心约定：Red → Green → Refactor
+
+**任何功能代码，必须先有测试，后有实现。**
+
+```
+Red    写一个会失败的测试
+  ↓
+Green  写最少的代码让测试通过
+  ↓
+Refactor  重构代码，保持测试绿色
+```
+
+### TDD 执行流程（每个功能单元）
+
+```
+Step 1  在 plan-phaseXX-*.md 中写出测试用例列表（伪代码描述）
+Step 2  创建测试文件，写第一个 failing test
+Step 3  运行测试，确认 RED（失败）
+Step 4  写最少的实现代码让测试通过
+Step 5  运行测试，确认 GREEN（通过）
+Step 6  重构实现代码（不改测试）
+Step 7  运行全量测试，确认无回归
+Step 8  在 progress.md 记录测试结果
+Step 9  重复 Step 2-8，直到所有用例覆盖
+```
+
+### 测试分层规范
+
+#### 后端单元测试（pytest）
+
+```
+tests/backend/
+├── unit/test_skill_manager.py     # SkillManager: scan, build_snapshot, budget降级
+├── unit/test_token_budget.py      # TokenBudgetState: slot追踪, 溢出检测
+├── unit/test_memory.py            # MemoryManager: load/save episodic
+├── unit/test_prompt_builder.py    # build_system_prompt: Skill Protocol注入
+├── unit/test_tools.py             # activate_skill, web_search, send_email
+├── integration/                   # 集成测试
+└── conftest.py                    # pytest 配置和 fixtures
+```
+
+每个测试文件结构：
 
 ```python
-# ── Agent 创建 ──────────────────────────────────────────────────
-from langchain.agents import create_agent
+# test_skill_manager.py
 
-# ── Middleware 基类和内置实现 ────────────────────────────────────
-from langchain.agents.middleware import (
-    AgentMiddleware,
-    SummarizationMiddleware,
-    HumanInTheLoopMiddleware,
-)
+import pytest
+from skills.manager import SkillManager, SkillSnapshot
 
-# ── Middleware 钩子（AgentMiddleware 子类中重写的方法）──────────
-# 正确签名如下，不要用其他签名：
-#
-#   async def abefore_agent(self, state: Any, runtime: Any) -> dict | None
-#       turn 开始时触发，返回 dict 写入 state，返回 None 不改变 state
-#
-#   def wrap_model_call(self, request: ModelRequest, handler: Callable) -> ModelResponse
-#       每次 LLM 调用前触发，用 request.override() 修改请求
-#
-#   async def aafter_model(self, state: Any, runtime: Any) -> dict | None
-#       每次 LLM 调用后触发
-#
-#   async def aafter_agent(self, state: Any, runtime: Any) -> dict | None
-#       turn 结束时触发
+class TestSkillManagerScan:
+    """SkillManager.scan() — 扫描 SKILL.md 文件"""
 
-# ── 短期记忆（checkpointer）────────────────────────────────────
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-# ⚠️ 连接必须用 psycopg3，三个参数缺一不可：
-# connection_kwargs={
-#     "autocommit": True,
-#     "row_factory": dict_row,
-#     "prepare_threshold": 0,
-# }
+    def test_scan_loads_active_skills(self, tmp_skills_dir):
+        """扫描后应加载 status=active 的 skill"""
+        # ARRANGE
+        # ACT
+        # ASSERT
 
-# ── 长期记忆（store）───────────────────────────────────────────
-from langgraph.store.postgres import AsyncPostgresStore   # ⚠️ Async 前缀
+    def test_scan_ignores_draft_skills(self, tmp_skills_dir):
+        """status=draft 的 skill 不应被加载"""
 
-# ── 工具并行调度 ────────────────────────────────────────────────
-from langgraph.prebuilt import ToolNode, InjectedState
+    def test_scan_skips_oversized_files(self, tmp_skills_dir):
+        """超过 MAX_SKILL_FILE_BYTES 的文件应被跳过"""
 
-# ── LLM Provider ────────────────────────────────────────────────
-from langchain_ollama import ChatOllama
-from langchain_community.chat_models import ChatZhipuAI
-from langchain_openai import ChatOpenAI   # 兼容 DeepSeek
 
-# ── 工具定义 ────────────────────────────────────────────────────
-from langchain_core.tools import tool
+class TestSkillManagerBuildSnapshot:
+    """SkillManager.build_snapshot() — 3 级预算降级"""
+
+    def test_full_format_within_budget(self, manager_with_2_skills):
+        """字符数在预算内，使用完整格式"""
+
+    def test_compact_format_when_over_budget(self, manager_with_many_skills):
+        """字符数超限时，降级为紧凑格式"""
+
+    def test_skills_sorted_by_priority_desc(self, manager):
+        """Snapshot 中 skill 按 priority 降序排列"""
+```
+
+必须覆盖的测试场景（不可省略）：
+
+| 模块 | 必须覆盖的场景 |
+|------|--------------|
+| SkillManager | scan 加载/过滤、build_snapshot 3 级降级、read_skill_content 错误处理 |
+| TokenBudgetState | 所有 10 个 slot 计算、overflow 检测、compression event 记录 |
+| MemoryManager | load 空用户返回默认值、save 正常写入、Ephemeral 不污染历史 |
+| Skill Protocol | 4 条规则全部存在于 system prompt 中 |
+| activate_skill | 存在 skill 返回内容、不存在 skill 返回错误提示 |
+
+#### 前端组件测试（Playwright Component Tests）
+
+```
+tests/components/
+├── ContextWindowPanel.spec.ts  # slot 渲染、颜色、overflow badge
+├── ReActPanel.spec.ts          # 步骤渲染、颜色编码、折叠展开
+├── SkillPanel.spec.ts          # skill 卡片、ACTIVE badge、抽屉
+└── HILConfirmDialog.spec.ts    # 弹出、approve/reject 流程
+```
+
+#### E2E 测试（Playwright headed）
+
+```
+tests/e2e/
+├── chat.spec.ts            # 基础对话流程
+├── react-trace.spec.ts     # ReAct 链路可视化
+├── context-window.spec.ts  # Token 上下文面板
+├── skills.spec.ts          # Skill 激活全流程
+└── hil.spec.ts             # HIL 确认/取消流程
+```
+
+**E2E 测试强制要求**：
+- `headless: false`（必须有头模式）
+- `slowMo: 300`（人眼可跟随）
+- 所有 SSE 相关断言设置超时 `≥ 15000ms`
+- 失败时保留截图 + 录像
+
+### 代码覆盖率要求
+
+| 层级 | 最低覆盖率 | 目标 |
+|------|-----------|------|
+| 后端核心模块（skills, memory, context） | 80% | 90% |
+| 后端 API 路由 | 70% | 80% |
+| 前端组件 | 60% | 75% |
+| E2E 关键路径 | 100% | 100% |
+
+### TDD 禁止行为
+
+- ❌ 先写实现，后补测试（事后测试不是 TDD）
+- ❌ 为让测试通过而 mock 掉被测核心逻辑
+- ❌ 跳过 RED 阶段直接写实现（必须先确认测试失败）
+- ❌ 提交未通过测试的代码
+- ❌ 修改测试来让实现通过（应该修改实现）
+
+---
+
+## 规则三：两层计划管理结构
+
+### 目录结构
+
+```
+/planning-with-files/           ← 项目级（宏观管理）
+├── task_plan.md                # 由 /planning-with-files 命令生成和维护
+├── findings.md                 # 由 /planning-with-files 命令生成和维护
+└── progress.md                 # 由 /planning-with-files 命令生成和维护
+
+/docs/plans/                    ← 阶段级（微观实施，手动维护）
+├── README.md                   # 计划索引和映射表
+├── plan-phase01-db-setup.md
+├── plan-phase02-skill-manager.md
+├── plan-phase03-memory.md
+├── plan-phase04-agent-core.md
+├── plan-phase05-prompt.md
+├── plan-phase06-tools.md
+├── plan-phase07-api.md
+├── plan-phase08-frontend-layout.md
+├── plan-phase09-react-trace.md
+├── plan-phase10-context-window.md
+├── plan-phase11-skills-ui.md
+├── plan-phase12-hil.md
+└── plan-phase13-e2e-tests.md
 ```
 
 ---
 
-## ❌ 禁止使用的 API 和写法
+### 3.1 项目级文件 — 由 `/planning-with-files` 管理
 
-```python
-# ❌ 已废弃
-from langgraph.prebuilt import create_react_agent   # LangGraph 1.0 已废弃
+`task_plan.md`、`findings.md`、`progress.md` 这三个文件**由 Claude Code 内置的 `/planning-with-files` 命令负责创建和维护**，不要手动重新定义它们的格式或结构。
 
-# ❌ 错误的数据库连接库
-import asyncpg      # LangGraph 不用 asyncpg，用 psycopg3
-import psycopg2     # 用 psycopg（v3），不是 psycopg2
+使用规范：
 
-# ❌ 错误的 Store 类名（缺少 Async 前缀）
-from langgraph.store.postgres import PostgresStore  # 错误
+```
+# 项目开始时初始化（只执行一次）
+/planning-with-files
 
-# ❌ interrupt_on 不是 create_agent 的参数
-create_agent(..., interrupt_on={"send_email": True})  # 错误
-# ✅ 正确：interrupt_on 是 HumanInTheLoopMiddleware 的参数
-HumanInTheLoopMiddleware(interrupt_on={"send_email": True})  # 正确
+# 每次会话开始时，读取这三个文件了解当前状态
+# 每次会话结束时，通过 /planning-with-files 更新进度
+```
 
-# ❌ 错误的 Middleware 钩子签名（后端计划文档里写错了，不要照抄）
-async def abefore_agent(self, request, handler):  # 错误签名
-# ✅ 正确签名
-async def abefore_agent(self, state: Any, runtime: Any) -> dict | None:  # 正确
+写入这三个文件时的内容约定（在 `/planning-with-files` 生成的结构内填充）：
 
-# ❌ 不存在的属性
-SystemMessage.content_blocks  # 不存在，用 SystemMessage.content
+- `task_plan.md` — 记录本项目的阶段划分、每阶段与 `docs/plans/` 计划文件的映射关系、当前阻塞项
+- `findings.md` — 记录查阅架构文档后的技术决策结论，格式：问题 → 查阅章节 → 结论 → 影响文件
+- `progress.md` — 记录每次会话的目标、完成项、文件变更列表、测试结果、遗留问题
+
+> ⚠️ 禁止在 CLAUDE.md 或其他地方重新定义这三个文件的格式。
+> 格式由 `/planning-with-files` skill 决定，以 skill 的实际输出为准。
+
+---
+
+### 3.2 docs/plans/plan-phaseXX-*.md — 格式规范
+
+每个阶段计划文件必须包含以下章节：
+
+```markdown
+# Phase 02 — SkillManager
+
+## 目标
+
+实现 SkillManager 完整功能，包含 scan、build_snapshot（3 级预算降级）、
+read_skill_content，并达到 90% 测试覆盖率。
+
+## 架构文档参考
+
+- Agent Skill v3 §1.2 Skill 数据模型
+- Agent Skill v3 §1.5 触发机制 — SkillSnapshot.prompt 格式
+- Agent Skill v3 §1.8 字符预算管理 — 3 级降级策略
+- Agent Skill v3 §1.10 Skill 加载优先级与目录规范
+
+## 测试用例清单（TDD 先写）
+
+### SkillManager.scan()
+- [ ] 扫描后应加载 status=active 的 skill
+- [ ] status=draft 的 skill 不应被加载
+- [ ] status=disabled 的 skill 不应被加载
+- [ ] 超过 MAX_SKILL_FILE_BYTES 的文件应被跳过
+- [ ] 无效 YAML frontmatter 的文件应被跳过
+- [ ] 没有 SKILL.md 的目录应被跳过
+- [ ] file_path 应将 home 目录替换为 ~
+
+### SkillManager.build_snapshot()
+- [ ] 字符数在预算内，使用完整格式（含 description）
+- [ ] 字符数超限，降级为紧凑格式（仅 name + file_path）
+- [ ] snapshot.version 每次构建递增
+- [ ] skills 按 priority 降序排列
+- [ ] disable_model_invocation=true 的 skill 不出现在 snapshot
+- [ ] 完整格式包含 Skill Protocol 头部说明文字
+
+### SkillManager.read_skill_content()
+- [ ] 存在的 skill 返回 SKILL.md 完整内容
+- [ ] 不存在的 skill 返回包含可用列表的错误提示
+- [ ] file_path 中的 ~ 应正确展开为 home 目录
+
+## 实现步骤（TDD 顺序）
+
+### Step 1 — 数据结构定义
+- 先写 `test_skill_definition_fields` 确认 dataclass 字段
+- 实现 `SkillDefinition`, `SkillEntry`, `SkillSnapshot`
+
+### Step 2 — scan()
+- 写全部 scan 测试，确认全部 RED
+- 实现 scan + _parse_frontmatter
+- 确认全部 GREEN
+
+### Step 3 — build_snapshot()
+- 写全部 snapshot 测试，确认全部 RED
+- 实现 build_snapshot + _build_prompt（完整格式）
+- 实现 3 级降级逻辑
+- 确认全部 GREEN
+
+### Step 4 — read_skill_content()
+- 写测试，实现，GREEN
+
+### Step 5 — 覆盖率检查
+```bash
+pytest tests/backend/test_skill_manager.py --cov=skills/manager --cov-report=term-missing
+```
+- 目标：90%+
+- 补充遗漏用例
+
+## 完成标准
+
+- [ ] 所有测试用例实现且通过
+- [ ] 覆盖率 ≥ 90%
+- [ ] findings.md 中记录所有技术决策
+- [ ] progress.md 更新本阶段会话日志
+- [ ] task_plan.md 阶段状态更新为 ✅ done
 ```
 
 ---
 
-## ⚠️ 后端实施计划（docs/implementation/backend-implementation-plan.md）已知错误
+### 3.3 docs/plans/README.md — 计划索引
 
-以下代码模板有错误，**不要照抄**，以本文件为准：
+```markdown
+# Plans Index
 
-```
-错误 1（Phase 1.4 数据库初始化）：
-  计划写的：from asyncpg import connect, Connection
-  正确写法：用 psycopg3 + AsyncPostgresSaver.from_conn_string()
+## 阶段映射表
 
-错误 2（Phase 1.4 数据库初始化）：
-  计划写的：AsyncPostgresStore(conn)
-  正确写法：AsyncPostgresStore.from_conn_string(DB_URI)
-
-错误 3（Phase 2.3 Memory Middleware）：
-  计划写的：async def abefore_agent(self, request, handler)
-  正确写法：async def abefore_agent(self, state: Any, runtime: Any) -> dict | None
-```
-
----
-
-## 关键架构约定
-
-### Short Memory（🔴 P0）
-
-```
-- AsyncPostgresSaver 全自动，不手写 save / restore 逻辑
-- thread_id = session_id，通过 config={"configurable": {"thread_id": ...}} 传入
-- checkpoint 表由 .setup() 自动创建，不手写建表 SQL
-- 只保存 HumanMessage + AIMessage，不保存 RAG chunk
-```
-
-### Long Memory（⚪ P2，当前不实现）
-
-```
-- P0 阶段 MemoryMiddleware 钩子结构建好即可
-- abefore_agent：P0 返回 None，不读 store
-- aafter_agent：P0 返回 None，不写 store
-- wrap_model_call：P0 直接透传 request，不注入用户画像
-```
-
-### SSE Event 协议
-
-```json
-// thought
-{ "type": "thought", "content": "LLM 推理文本" }
-
-// tool_start
-{ "type": "tool_start", "tool_name": "web_search", "args": {"query": "..."} }
-
-// tool_result
-{ "type": "tool_result", "result": "工具返回内容" }
-
-// done
-{ "type": "done", "answer": "最终答案" }
-
-// error
-{ "type": "error", "message": "错误信息" }
-
-// hil_interrupt（🟡 P1，当前不实现）
-{ "type": "hil_interrupt", "interrupt_id": "uuid", "tool_name": "send_email", "tool_args": {} }
-```
-
-### user_id 来源
-
-```
-🔴 P0：从请求 body 直接传入，不做鉴权
-  { "message": "...", "session_id": "...", "user_id": "dev_user" }
-
-🟡 P1 之后：从 JWT token 解码获取
-```
-
-### 工具编写规范
-
-```python
-@tool
-def web_search(query: str) -> str:
-    """
-    搜索互联网获取实时信息。
-    适用：最新股价、新闻动态、法规变化等实时数据。
-    不适用：静态知识、数学计算。
-    """
-    # description 必须写清楚"适用/不适用"，影响 LLM 选工具的准确率
-    # 返回值必须是 str，复杂结果 json.dumps() 序列化
+| 阶段 | 计划文件 | 对应代码路径 | 架构文档 |
+|------|---------|------------|---------|
+| 01 | plan-phase01-db-setup.md | backend/db/ | Memory v5 §2.3 |
+| 02 | plan-phase02-skill-manager.md | backend/skills/ | Skill v3 §1.2-1.10 |
+| 03 | plan-phase03-memory.md | backend/memory/ | Memory v5 §2.4-2.9 |
+| 04 | plan-phase04-agent-core.md | backend/agent/ | Agent v13 §2.1 |
+| 05 | plan-phase05-prompt.md | backend/prompt/ | Prompt v20 §1.3-1.4 |
+| 06 | plan-phase06-tools.md | backend/tools/ | Agent v13 §1.12 |
+| 07 | plan-phase07-api.md | backend/main.py | Agent v13 §2.4 |
+| 08 | plan-phase08-frontend-layout.md | frontend/app/ | — |
+| 09 | plan-phase09-react-trace.md | frontend/components/react-trace/ | Agent v13 §1.12 |
+| 10 | plan-phase10-context-window.md | frontend/components/context-window/ | Prompt v20 §1.2 |
+| 11 | plan-phase11-skills-ui.md | frontend/components/skills/ | Skill v3 §1.6 |
+| 12 | plan-phase12-hil.md | frontend/components/hil/ | Agent v13 §1.13 |
+| 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — |
 ```
 
 ---
 
-## 目录结构
+## 规则四：每次会话的固定开场和收场
+
+### 会话开始时（必须执行）
 
 ```
-agent_app/
-├── CLAUDE.md                          # 本文件（项目根目录）
-├── docs/                              # 设计文档
-├── docker-compose.yml
-├── .env.example
-├── skills/                            # Claude Code 读取的 SKILL.md（根目录）
-│   └── langchain-api/
-│       └── SKILL.md
-│
-├── backend/
-│   ├── app/
-│   │   ├── main.py                    # FastAPI 入口 + lifespan
-│   │   ├── config.py                  # pydantic-settings
-│   │   ├── agent/
-│   │   │   ├── executor.py            # Agent 主入口
-│   │   │   ├── langchain_engine.py    # create_agent 组装
-│   │   │   ├── finish_handler.py      # finish_reason 全量处理
-│   │   │   ├── error_recovery.py      # 降级兜底
-│   │   │   └── middleware/            # ⚠️ 在 agent/ 内部，不在顶层
-│   │   │       ├── memory.py          # MemoryMiddleware
-│   │   │       └── trace.py           # TraceMiddleware（SSE 推送）
-│   │   ├── api/
-│   │   │   └── chat.py                # /chat + /chat/resume 路由
-│   │   ├── core/
-│   │   │   ├── config.py              # 配置读取
-│   │   │   ├── logging.py             # 结构化日志
-│   │   │   └── session.py             # session_id → thread_id 映射
-│   │   ├── db/
-│   │   │   ├── client.py              # 连接池单例
-│   │   │   └── postgres.py            # AsyncPostgresSaver + AsyncPostgresStore 初始化
-│   │   ├── llm/
-│   │   │   ├── factory.py             # llm_factory()
-│   │   │   ├── ollama_provider.py
-│   │   │   ├── zhipu_provider.py
-│   │   │   ├── deepseek_provider.py
-│   │   │   └── openai_provider.py
-│   │   ├── memory/                    # ⚪ P2，P0 建目录占位即可
-│   │   │   ├── schemas.py             # EpisodicData / MemoryContext
-│   │   │   ├── manager.py             # MemoryManager（P0 空实现）
-│   │   │   └── long_term/
-│   │   │       └── episodic.py        # P0 空实现；P2 写回逻辑
-│   │   ├── prompt/
-│   │   │   ├── builder.py             # build_system_prompt()
-│   │   │   └── templates.py           # 角色定义 / 行为约束静态模板
-│   │   ├── tools/
-│   │   │   ├── registry.py            # 工具注册表
-│   │   │   ├── base.py                # 工具基类
-│   │   │   ├── search.py              # web_search（Tavily）🔴 P0
-│   │   │   ├── file.py                # read_file（🟡 P1 Skills 用）
-│   │   │   └── send_email.py          # mock 邮件（🟡 P1 HIL 演示）
-│   │   ├── skills/                    # Skills Manager 代码（🟡 P1，P0 不建）
-│   │   │   ├── manager.py             # SkillManager
-│   │   │   ├── registry.py            # SkillRegistry
-│   │   │   └── models.py              # SkillDefinition / SkillSnapshot
-│   │   ├── observability/
-│   │   │   ├── tracer.py              # AgentTrace 写入（🟡 P1）
-│   │   │   └── events.py              # SSE Event 类型定义
-│   │   └── utils/
-│   │       ├── token.py               # Token 计数（tiktoken）
-│   │       └── security.py            # 路径校验（read_file 安全）
-│   ├── supabase/
-│   │   └── migrations/
-│   │       ├── 001_agent_traces.sql   # 🔴 P0 手写建表
-│   │       ├── 002_users_sessions.sql # 🟡 P1
-│   │       └── rollback/
-│   ├── requirements.txt
-│   └── Dockerfile.dev
-│
-├── frontend/
-│   ├── src/
-│   │   ├── app/                       # Next.js App Router
-│   │   ├── components/
-│   │   │   ├── ChatInput.tsx          # 🔴 P0
-│   │   │   ├── MessageList.tsx        # 🔴 P0
-│   │   │   └── ToolCallTrace.tsx      # 🔴 P0 工具调用链路
-│   │   ├── lib/
-│   │   │   └── sse-manager.ts         # SSE 连接管理
-│   │   ├── store/
-│   │   │   └── use-session.ts         # Zustand 状态
-│   │   └── types/
-│   └── Dockerfile.dev
-│
-└── tests/
-    ├── unit/                          # 🔴 P0 起建
-    ├── integration/                   # 🟡 P1
-    └── e2e/                           # 🟡 P1
+1. 运行 /planning-with-files — 读取 task_plan.md 和 progress.md 了解当前状态
+2. 打开当前阶段的 docs/plans/plan-phaseXX-*.md — 确认本次目标
+3. 确认下一个要实现的测试用例（从阶段计划的测试用例清单找第一个未勾选的）
+4. 报告："当前阶段 XX，上次完成了 XXX，本次目标是 XXX"
+```
+
+### 会话结束时（必须执行）
+
+```
+1. 运行全量测试，记录测试结果
+2. 运行 /planning-with-files — 将以下内容更新到对应文件：
+   - task_plan.md：更新阶段状态（⏳ / 🔄 / ✅ / ❌）
+   - findings.md：本次查阅架构文档的技术决策结论
+   - progress.md：本次会话日志（完成项、文件变更、测试结果、遗留问题）
+3. 在阶段计划文件 docs/plans/plan-phaseXX-*.md 勾选已完成的测试用例
+4. 确认下次会话的入口点（下一个 failing test）
 ```
 
 ---
 
-## 数据库约定
+## 规则五：文件操作规范
 
-### 建表策略
+### 创建新文件前
 
-```
-checkpoint 表   →  AsyncPostgresSaver.setup() 自动建，不手写
-store 表        →  AsyncPostgresStore.setup() 自动建，不手写
-agent_traces 表 →  手写 migration（001_agent_traces.sql）🔴 P0
-users / sessions → 手写 migration（002_users_sessions.sql）🟡 P1
-约束 / RLS / 复杂索引 → 🟡 P1 后按 database_plan.md 分批实施
-```
+1. 检查 docs/plans/ 中是否有对应阶段计划
+2. 确认测试文件已存在（测试先于实现）
+3. 通过 `/planning-with-files` 在 progress.md 预登记文件变更
 
-### P0 最小 Schema
+### 修改现有文件前
 
-```sql
--- supabase/migrations/001_agent_traces.sql
-CREATE TABLE IF NOT EXISTS agent_traces (
-    id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id    text        NOT NULL,
-    user_id       text        NOT NULL DEFAULT 'dev_user',
-    user_input    text,
-    final_answer  text,
-    thought_chain jsonb       NOT NULL DEFAULT '[]',
-    tool_calls    jsonb       NOT NULL DEFAULT '[]',
-    token_usage   jsonb       NOT NULL DEFAULT '{}',
-    latency_ms    integer,
-    finish_reason text,
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_agent_traces_session ON agent_traces(session_id);
-CREATE INDEX IF NOT EXISTS idx_agent_traces_user    ON agent_traces(user_id);
-```
+1. 确认修改不会破坏现有通过的测试
+2. 如会影响多个模块，先通过 `/planning-with-files` 更新 task_plan.md 的依赖关系
+3. 修改后立即运行相关测试确认无回归
+
+### 绝对禁止
+
+- ❌ 在没有对应测试的情况下创建实现文件
+- ❌ 删除测试文件（即使测试暂时 skip）
+- ❌ 修改 CLAUDE.md 本身（除非用户明确指示）
+- ❌ 在计划文件更新之前开始下一阶段
 
 ---
 
-## 每个 Step 的验收命令
+## 规则六：命令规范
+
+### 测试命令（标准化）
 
 ```bash
-# Step 1  Docker 启动
-docker-compose up -d postgres
-docker-compose exec postgres pg_isready -U postgres
-# 期望：accepting connections
+# 后端单元测试
+cd tests/backend && pytest -v --tb=short
 
-# Step 2-3  配置 + 数据库初始化
-cd backend
-python -c "
-import asyncio
-from app.db.postgres import init_db
-asyncio.run(init_db())
-"
-# 期望：checkpointer ready / store ready，无报错
+# 后端覆盖率报告
+cd tests/backend && pytest --cov=../app --cov-report=term-missing --cov-report=html
 
-# Step 4  LLM Factory
-python -c "
-import asyncio
-from app.llm.factory import llm_factory
-llm = llm_factory()
-resp = asyncio.run(llm.ainvoke('hi'))
-print(resp.content)
-"
-# 期望：LLM 返回任意文本，无报错
+# 前端组件测试（从 frontend 目录运行）
+npx playwright test tests/components/ --headed
 
-# Step 5  web_search 工具
-python -c "
-from app.tools.search import web_search
-result = web_search.invoke({'query': '茅台最新股价'})
-print(result)
-"
-# 期望：返回搜索结果文本
+# E2E 测试（有头模式，必须）
+cd frontend && npx playwright test --headed
 
-# Step 6-9  Agent 主链路
-python -c "
-import asyncio
-from app.agent.executor import run_once
-asyncio.run(run_once(
-    message='帮我查一下茅台今天的股价',
-    session_id='test-001',
-    user_id='dev_user'
-))
-"
-# 期望：控制台输出 thought → tool_start → tool_result → done
+# 单个 spec 文件
+cd frontend && npx playwright test tests/e2e/skills.spec.ts --headed
 
-# Step 10  HTTP 接口
-curl -X POST http://localhost:8000/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"帮我查茅台股价","session_id":"s1","user_id":"dev_user"}' \
-  --no-buffer
-# 期望：SSE 事件流，包含 thought / tool_start / tool_result / done
-
-# Step 11  前端验收（浏览器）
-# http://localhost:3000
-# 输入：帮我查一下茅台今天的股价 → 看到流式思考链 + 工具调用卡片
-# 输入：和昨天比怎么样？         → Agent 记住上轮结果（Short Memory 验证）
+# 生成 Playwright HTML 报告
+npx playwright show-report
 ```
+
+### 计划文件更新（每次会话结束时）
+
+```bash
+# 通过 Claude Code 内置命令更新三个项目级文件
+# 在 Claude Code 对话框中执行：
+/planning-with-files
+```
+
+> 不要用 shell 命令直接写入 task_plan.md / findings.md / progress.md。
+> 始终通过 `/planning-with-files` 命令，让 skill 按它自己的格式维护这三个文件。
 
 ---
 
-## 优先级速查
+## 快速参考：问题 → 架构文档映射
 
-```
-🔴 P0（面试前，当前阶段）
-  web_search 工具
-  SSE 流式推送（thought / tool_start / tool_result / done）
-  Short Memory（AsyncPostgresSaver，多轮对话历史）
-  agent_traces 表建表
-  前端对话界面 + 工具调用链路展示
-
-🟡 P1（P0 跑通后，面试加分）
-  HIL 完整流程（send_email mock + /chat/resume 接口 + 前端弹窗）
-  Long Memory 基础（interaction_count +1，读写链路跑通）
-  可观测性（tracer.py 写入 + Supabase Studio 展示）
-  多 LLM Provider 完整版 + Fallback
-
-⚪ P2（面试后）
-  Long Memory 规则提炼（合同/签署 → domain=legal）
-  Skills 插件系统（SkillManager + activate_skill 工具）
-  数据库约束 + RLS + 复杂索引（按 database_plan.md）
-  完整测试套件（集成 + E2E，按 test_plan.md）
-  生产部署（Vercel + Railway + Supabase，按 deploy_plan.md）
-```
-
----
-
-## 项目管理约定
-
-严格遵守用 planning-with-files skill 进行项目管理
-
-每次 session 结束前更新：
-```
-task_plan.md  →  把本次完成的 Step 打 [x]
-findings.md   →  记录 API 验证结论和踩坑
-progress.md   →  记录本次 session 做了什么
-```
-
-每次新 session 开始，统一用这句话：
-> "读取 CLAUDE.md 和 task_plan.md，告诉我当前完成到哪个 Step，然后继续下一个未完成的 Step。每个 Step 完成后更新 task_plan.md，遇到 API 验证结论写入 findings.md。"
-
----
-
-## 禁止事项
-
-```
-❌ 不要一次实现多个 Step，每步跑通验收后再推进
-❌ 不要超前实现 P1 / P2 功能
-❌ 不要使用 ❌ 禁止 API 列表里的任何 API
-❌ 不要直接复制 docs/implementation/backend-implementation-plan.md 里的代码模板（有已知错误）
-❌ 不要跳过每 Step 的验收命令
-❌ 不要自行发明文档里没有的模块或目录
-❌ 不要在 P0 阶段碰 Skills / HIL / Long Memory / Fallback
-```
-
----
-
-## 遇到问题时
-
-```
-1. API 是否存在不确定
-   → python -c "import module; help(module.ClassName)"  先验证再用
-
-2. 架构决策有疑问
-   → 查 总架构设计：`docs/Multi-Tool AI Agent 完整架构设计文档 v13` agent skills 架构设计：`docs/agent skills.md` memory 架构设计：`docs/Memory 模块架构设计文档 v5.md` Prompt+context 架构设计：`docs/Prompt + Context 模块完整设计文档.md` 等架构设计文档的对应章节
-   → 不确定就停下来，不要自行决策
-
-3. 运行报错
-   → 读完整错误栈，定位到具体文件和行号
-   → 将错误现象 + 修复方案写入 .planning/findings.md
-
-4. 代码模板和本文件冲突
-   → 以本文件（CLAUDE.md）为准
-```
+| 遇到的问题 | 查阅文档 | 具体章节 |
+|-----------|---------|---------|
+| checkpointer / store 初始化报错 | Memory v5 | §2.3 存储层初始化 |
+| middleware 与 state_schema 冲突 | Memory v5 | §2.2 关键约束 |
+| wrap_model_call vs before_model 选择 | Memory v5 | §2.5 Middleware 钩子职责 |
+| Ephemeral 注入应该怎么做 | Memory v5 | §1.4 Ephemeral vs Persistent |
+| SkillSnapshot 格式如何生成 | Skill v3 | §1.5 触发机制 |
+| Skill Protocol 4 条规则 | Skill v3 | §1.4 Skill Protocol |
+| 字符预算超限如何降级 | Skill v3 | §1.8 字符预算管理 |
+| activate_skill 工具如何注册 | Skill v3 | §2.2 read_file @tool |
+| 10 个 Slot 如何分配 Token | Prompt v20 | §1.2 子模块与 Context Window 分区 |
+| 组装时序不清楚 | Prompt v20 | §1.4 完整组装时序 |
+| SSE 事件类型划分 | Agent v13 | §2.4 SSE 流式架构 |
+| HIL 拦截如何实现 | Agent v13 | §1.13 HIL 完整设计 |
+| ReAct 循环工具并行 | Agent v13 | §2.2 Workflow 映射 |
+| 部署架构选择 | Agent v13 | §1.10 部署架构范式对比 |

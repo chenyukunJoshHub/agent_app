@@ -40,7 +40,19 @@
 ```bash
 cd backend
 pip install -e ".[dev]"
-uvicorn app.api.main:app --reload
+uvicorn app.main:app --reload --log-level info
+```
+
+启动后日志输出示例：
+```
+INFO:     Started server process [12345]
+INFO:     Waiting for application startup.
+INFO:     Starting Multi-Tool AI Agent backend...
+INFO:     Environment: development
+INFO:     LLM Provider: ollama
+INFO:     Database initialized successfully
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
 **前端**

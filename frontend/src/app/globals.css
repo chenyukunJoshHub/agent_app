@@ -1,0 +1,339 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* ==================== 颜色系统 ==================== */
+
+  /* 主色调 */
+  --color-primary: #5E6AD2;
+  --color-primary-hover: #4F5BC4;
+  --color-primary-light: rgba(94, 106, 210, 0.1);
+
+  /* 次要色 */
+  --color-secondary: #6366F1;
+  --color-secondary-hover: #818CF8;
+
+  /* 强调色 */
+  --color-accent: #22C55E;
+  --color-accent-hover: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #3B82F6;
+
+  /* 浅色模式背景 */
+  --color-bg-base: #FFFFFF;
+  --color-bg-alt: #F8FAFC;
+  --color-bg-muted: #F1F5F9;
+  --color-bg-card: #FFFFFF;
+  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* 浅色模式边框 */
+  --color-border-base: #E2E8F0;
+  --color-border-muted: #F1F5F9;
+  --color-border-strong: #CBD5E1;
+
+  /* 浅色模式文本 */
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94A3B8;
+  --color-text-disabled: #CBD5E1;
+  --color-text-inverse: #FFFFFF;
+
+  /* 语义色 - 浅色 */
+  --color-success-bg: #DCFCE7;
+  --color-success-text: #15803D;
+  --color-warning-bg: #FEF3C7;
+  --color-warning-text: #A16207;
+  --color-error-bg: #FEE2E2;
+  --color-error-text: #B91C1C;
+  --color-info-bg: #DBEAFE;
+  --color-info-text: #1D4ED8;
+
+  /* 深色模式背景 */
+  --color-bg-base-dark: #0A0A0F;
+  --color-bg-alt-dark: #0F1014;
+  --color-bg-muted-dark: #15161A;
+  --color-bg-card-dark: #1A1B1E;
+  --color-bg-elevated-dark: #222328;
+  --color-bg-overlay-dark: rgba(0, 0, 0, 0.7);
+
+  /* 深色模式边框 */
+  --color-border-base-dark: rgba(255, 255, 255, 0.08);
+  --color-border-muted-dark: rgba(255, 255, 255, 0.05);
+  --color-border-strong-dark: rgba(255, 255, 255, 0.15);
+
+  /* 深色模式文本 */
+  --color-text-primary-dark: #EDEDEF;
+  --color-text-secondary-dark: #A1A1AA;
+  --color-text-muted-dark: #71717A;
+  --color-text-disabled-dark: #52525B;
+  --color-text-inverse-dark: #0A0A0F;
+
+  /* ReAct 链路颜色 */
+  --react-thought: #A78BFA;
+  --react-tool-call: #3B82F6;
+  --react-tool-result: #14B8A6;
+  --react-final: #22C55E;
+  --react-interrupt: #F59E0B;
+
+  /* ==================== 排版系统 ==================== */
+  --font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+
+  /* 字体大小 */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+
+  /* 字重 */
+  --font-light: 300;
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* 行高 */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* ==================== 间距系统 ==================== */
+  --spacing-0: 0;
+  --spacing-px: 1px;
+  --spacing-0_5: 2px;
+  --spacing-1: 4px;
+  --spacing-1_5: 6px;
+  --spacing-2: 8px;
+  --spacing-2_5: 10px;
+  --spacing-3: 12px;
+  --spacing-3_5: 14px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+  --spacing-20: 80px;
+  --spacing-24: 96px;
+
+  /* ==================== 圆角系统 ==================== */
+  --radius-none: 0;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-full: 9999px;
+
+  /* ==================== 阴影系统 ==================== */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+  /* ==================== 动画系统 ==================== */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.67, 0, 0.83, 0.67);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 500ms;
+
+  /* ==================== Z-Index 层级 ==================== */
+  --z-dropdown: 1000;
+  --z-sticky: 1020;
+  --z-fixed: 1030;
+  --z-modal-backdrop: 1040;
+  --z-modal: 1050;
+  --z-popover: 1060;
+  --z-tooltip: 1070;
+}
+
+/* ==================== 深色模式 ==================== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-base: var(--color-bg-base-dark);
+    --color-bg-alt: var(--color-bg-alt-dark);
+    --color-bg-muted: var(--color-bg-muted-dark);
+    --color-bg-card: var(--color-bg-card-dark);
+    --color-bg-overlay: var(--color-bg-overlay-dark);
+
+    --color-border-base: var(--color-border-base-dark);
+    --color-border-muted: var(--color-border-muted-dark);
+    --color-border-strong: var(--color-border-strong-dark);
+
+    --color-text-primary: var(--color-text-primary-dark);
+    --color-text-secondary: var(--color-text-secondary-dark);
+    --color-text-muted: var(--color-text-muted-dark);
+    --color-text-disabled: var(--color-text-disabled-dark);
+  }
+}
+
+/* ==================== 基础样式 ==================== */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-family-base);
+  background-color: var(--color-bg-base);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  transition: background-color var(--duration-slow) var(--ease-out),
+              color var(--duration-slow) var(--ease-out);
+}
+
+/* ==================== 滚动条 ==================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+
+/* Firefox 滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-text-muted) transparent;
+}
+
+/* ==================== Focus 可见性 ==================== */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ==================== 选中文本 ==================== */
+::selection {
+  background-color: var(--color-primary-light);
+  color: var(--color-text-primary);
+}
+
+/* ==================== 减少动画 ==================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==================== 工具类 ==================== */
+.glow-primary {
+  box-shadow: 0 0 20px rgba(94, 106, 210, 0.3);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+}
+
+.glow-danger {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+}
+
+/* ==================== 动画关键帧 ==================== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn var(--duration-base) var(--ease-out);
+}
+
+.animate-slideUp {
+  animation: slideUp var(--duration-slow) var(--ease-out);
+}
+
+.animate-scaleIn {
+  animation: scaleIn var(--duration-base) var(--ease-out);
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}

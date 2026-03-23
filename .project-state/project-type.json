@@ -1,0 +1,26 @@
+{
+  "project_name": "Multi-Tool AI Agent",
+  "project_type": "fullstack-web-application",
+  "description": "基于 LangChain + LangGraph 的多工具 AI Agent，支持 ReAct 推理、工具调用、多轮对话、Memory 三层架构、Skills 插件系统、HIL 人工介入",
+  "language": "python",
+  "framework": "fastapi",
+  "frontend_framework": "nextjs",
+  "source_dir": "backend/",
+  "test_dir": "tests/",
+  "doc_dir": "docs/",
+  "config_file": "pyproject.toml",
+  "database": "postgresql",
+  "ai_framework": ["langchain", "langgraph"],
+  "current_phase": "Phase 1",
+  "phase_status": "in_progress",
+  "overall_progress": "5%",
+  "phases_completed": 0,
+  "phases_total": 6,
+  "last_updated": "2026-03-20T01:00:00Z",
+  "next_actions": [
+    "创建后端项目结构 (backend/requirements.txt, config.py)",
+    "创建前端项目结构 (frontend/package.json, next.config.js)",
+    "完善 Docker Compose 配置",
+    "数据库初始化 (执行迁移脚本)"
+  ]
+}
