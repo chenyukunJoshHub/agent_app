@@ -1,10 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Layers, TrendingUp, Activity, BarChart3, FileText } from 'lucide-react';
-import { useState } from 'react';
+import { Layers, TrendingUp, Activity, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ContextWindowData, SlotUsage, SlotDetail } from '@/types/context-window';
+import type { ContextWindowData, SlotDetail } from '@/types/context-window';
 import { SlotBar } from './SlotBar';
 import { CompressionLog } from './CompressionLog';
 import { SlotDetailList } from './SlotDetail';
@@ -29,12 +28,14 @@ interface ContextWindowPanelProps {
  */
 export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProps) {
   const { budget, slotUsage, compressionEvents } = data;
-  const [showDetails, setShowDetails] = useState(false);
 
   // Calculate overall usage
   const totalUsed = budget.usage.total_used;
   const totalBudget = budget.working_budget;
   const usagePercentage = totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0;
+  const autocompactBuffer =
+    budget.usage.autocompact_buffer ?? Math.max(0, Math.floor(totalBudget * 0.165));
+  const freeSpace = Math.max(0, totalBudget - totalUsed - autocompactBuffer);
 
   // Format numbers
   const formatNumber = (num: number) => {
@@ -72,21 +73,126 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
 
   const statusConfig = getStatusConfig();
 
+  const rawToCanonical: Record<string, string> = {
+    system: 'system',
+    skill_registry: 'system',
+    skill_protocol: 'system',
+    output_format: 'system',
+    active_skill: 'active_skill',
+    few_shot: 'few_shot',
+    rag: 'rag',
+    episodic: 'episodic',
+    procedural: 'procedural',
+    tools: 'tools',
+    history: 'history',
+    user_input: 'history',
+  };
+
+  const categoryLabels: Record<string, string> = {
+    system: 'System prompt',
+    active_skill: 'Active skill',
+    few_shot: 'Few-shot',
+    rag: 'RAG',
+    episodic: 'Episodic memory',
+    procedural: 'Procedural memory',
+    tools: 'Tools schema',
+    history: 'Messages',
+  };
+
+  const categoryUsage = (() => {
+    const aggregate: Record<string, number> = {
+      system: 0,
+      active_skill: 0,
+      few_shot: 0,
+      rag: 0,
+      episodic: 0,
+      procedural: 0,
+      tools: 0,
+      history: 0,
+    };
+
+    if (slotDetails && slotDetails.length > 0) {
+      for (const slot of slotDetails) {
+        if (!slot.enabled) {
+          continue;
+        }
+        const canonical = rawToCanonical[slot.name];
+        if (canonical) {
+          aggregate[canonical] += slot.tokens;
+        }
+      }
+    } else {
+      for (const slot of slotUsage) {
+        if (slot.name in aggregate) {
+          aggregate[slot.name] = slot.used;
+        }
+      }
+    }
+
+    return Object.entries(aggregate)
+      .map(([name, tokens]) => ({ name, label: categoryLabels[name], tokens }))
+      .filter((item) => item.tokens > 0)
+      .sort((a, b) => b.tokens - a.tokens);
+  })();
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-testid="context-window-panel">
       {/* Header */}
       <div className="border-b border-border p-4 bg-background-alt">
         <div className="flex items-center gap-2">
           <Layers className="w-5 h-5 text-text-secondary" />
-          <h2 className="font-semibold text-text-primary">Context Window</h2>
+          <h2 className="font-semibold text-text-primary">Context Usage</h2>
         </div>
         <p className="mt-1 text-xs text-text-muted">
-          Token 预算: {formatNumber(totalBudget)} | 模型上限:{' '}
-          {formatNumber(budget.model_context_window)}
+          {formatNumber(totalUsed)}/{formatNumber(totalBudget)} tokens ({usagePercentage.toFixed(1)}
+          %)
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {/* Usage by Category */}
+        <div className="border-b border-border p-4 bg-bg-card">
+          <div className="mb-3 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-text-secondary" />
+            <span className="text-sm font-medium text-text-primary">Estimated usage by category</span>
+          </div>
+          <div className="space-y-2">
+            {categoryUsage.map((item) => {
+              const ratio = totalBudget > 0 ? (item.tokens / totalBudget) * 100 : 0;
+              return (
+                <div
+                  key={item.name}
+                  className="flex items-center justify-between text-sm"
+                  data-testid={`context-row-${item.name}`}
+                >
+                  <span className="text-text-secondary">{item.label}</span>
+                  <span className="text-text-primary tabular-nums">
+                    {formatNumber(item.tokens)} ({ratio.toFixed(1)}%)
+                  </span>
+                </div>
+              );
+            })}
+            <div
+              className="flex items-center justify-between text-sm border-t border-border pt-2"
+              data-testid="context-row-free-space"
+            >
+              <span className="text-text-secondary">Free space</span>
+              <span className="text-text-primary tabular-nums">
+                {formatNumber(freeSpace)} ({(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
+              </span>
+            </div>
+            <div
+              className="flex items-center justify-between text-sm"
+              data-testid="context-row-autocompact-buffer"
+            >
+              <span className="text-text-secondary">Autocompact buffer</span>
+              <span className="text-text-primary tabular-nums">
+                {formatNumber(autocompactBuffer)} ({(totalBudget > 0 ? (autocompactBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Overall Progress Bar */}
         <div className="border-b border-border p-4 bg-bg-card">
           <div className="mb-3 flex items-center justify-between">
@@ -132,42 +238,34 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
 
         {/* Slot Breakdown */}
         <div className="border-b border-border p-4 bg-bg-card">
+          <div className="mb-3 flex items-center gap-2">
+            <Layers className="w-4 h-4 text-text-secondary" />
+            <span className="text-sm font-medium text-text-primary">完整 Slot 快照</span>
+          </div>
+          <div className="space-y-2" data-testid="slot-breakdown">
+            {slotDetails && slotDetails.length > 0 ? (
+              <SlotDetailList slots={slotDetails} preview />
+            ) : (
+              slotUsage.map((slot) => <SlotBar key={slot.name} slot={slot} />)
+            )}
+          </div>
+        </div>
+
+        {/* Slot Budget Breakdown */}
+        <div className="border-b border-border p-4 bg-bg-card">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-text-secondary" />
-              <span className="text-sm font-medium text-text-primary">Slot 分解</span>
+              <span className="text-sm font-medium text-text-primary">Slot 预算分解</span>
               <span className="text-xs text-text-muted">({slotUsage.length} 个 Slot)</span>
             </div>
-
-            {/* View toggle button */}
-            {slotDetails && slotDetails.length > 0 && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setShowDetails(!showDetails)}
-                className={cn(
-                  'flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors',
-                  showDetails
-                    ? 'bg-accent text-white'
-                    : 'bg-bg-muted text-text-secondary hover:bg-bg-alt'
-                )}
-              >
-                <FileText className="w-3 h-3" />
-                {showDetails ? '显示概览' : '显示详情'}
-              </motion.button>
-            )}
           </div>
 
-          {/* Slot bars or details */}
-          {showDetails && slotDetails ? (
-            <SlotDetailList slots={slotDetails} />
-          ) : (
-            <div className="space-y-2" data-testid="slot-breakdown">
-              {slotUsage.map((slot) => (
-                <SlotBar key={slot.name} slot={slot} />
-              ))}
-            </div>
-          )}
+          <div className="space-y-2">
+            {slotUsage.map((slot) => (
+              <SlotBar key={slot.name} slot={slot} />
+            ))}
+          </div>
         </div>
 
         {/* Statistics Row */}

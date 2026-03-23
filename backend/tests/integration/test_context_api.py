@@ -55,6 +55,7 @@ class TestContextAPIIntegration:
         usage = budget["usage"]
         assert usage["input_budget"] == 24576  # 32768 - 8192
         assert usage["output_reserve"] == 8192
+        assert usage["autocompact_buffer"] > 0
 
     def test_get_session_context_different_sessions(self, client: TestClient) -> None:
         """Test that endpoint works for different session IDs."""

@@ -110,6 +110,7 @@ class TestGetSessionContext:
             assert "total_remaining" in usage
             assert "input_budget" in usage
             assert "output_reserve" in usage
+            assert "autocompact_buffer" in usage
 
     def test_get_session_context_calculates_remaining_budget(
         self, client: TestClient, mock_token_budget: TokenBudget
@@ -180,6 +181,7 @@ class TestContextResponseModel:
             total_remaining=32768,
             input_budget=24576,
             output_reserve=8192,
+            autocompact_buffer=4096,
         )
 
         # Create slot allocations
@@ -217,6 +219,7 @@ class TestContextResponseModel:
             total_remaining=32768,
             input_budget=24576,
             output_reserve=8192,
+            autocompact_buffer=4096,
         )
 
         slots = SlotAllocation(

@@ -12,6 +12,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Context Window', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
+    await page.getByRole('button', { name: /context/i }).click();
   });
 
   test('应该显示 Token 使用进度条', async ({ page }) => {

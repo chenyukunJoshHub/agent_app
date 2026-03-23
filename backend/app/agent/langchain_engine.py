@@ -73,6 +73,8 @@ SLOT_META: dict[str, dict[str, str | int]] = {
     },
 }
 
+AUTO_COMPACT_BUFFER_RATIO = 0.165
+
 # Raw slot names -> canonical context bucket
 SLOT_CANONICAL_MAP: dict[str, str] = {
     "system": "system",
@@ -253,9 +255,14 @@ async def create_react_agent(
                             ),
                             "input_budget": DEFAULT_BUDGET.input_budget,
                             "output_reserve": DEFAULT_BUDGET.SLOT_OUTPUT,
+                            "autocompact_buffer": max(
+                                0,
+                                int(DEFAULT_BUDGET.WORKING_BUDGET * AUTO_COMPACT_BUFFER_RATIO),
+                            ),
                         },
                     },
                     "slotUsage": slot_usage,
+                    "slotDetails": slot_snapshot.to_dict()["slots"],
                     "compressionEvents": [],
                 },
             ),

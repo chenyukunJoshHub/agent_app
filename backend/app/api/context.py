@@ -14,6 +14,8 @@ from app.prompt.budget import DEFAULT_BUDGET
 from app.prompt.builder import get_slot_snapshot
 from app.skills.manager import SkillManager
 
+AUTO_COMPACT_BUFFER_RATIO = 0.165
+
 
 # Response Models
 class SlotAllocation(BaseModel):
@@ -36,6 +38,7 @@ class UsageMetrics(BaseModel):
     total_remaining: int = Field(..., description="Total tokens remaining")
     input_budget: int = Field(..., description="Available input budget")
     output_reserve: int = Field(..., description="Output reservation")
+    autocompact_buffer: int = Field(..., description="Reserved buffer before auto-compaction")
 
 
 class TokenBudgetState(BaseModel):
@@ -118,6 +121,7 @@ async def get_session_context(session_id: str) -> ContextResponse:
         total_remaining=budget.WORKING_BUDGET,  # P0: Full budget available
         input_budget=budget.input_budget,
         output_reserve=budget.SLOT_OUTPUT,
+        autocompact_buffer=max(0, int(budget.WORKING_BUDGET * AUTO_COMPACT_BUFFER_RATIO)),
     )
 
     # Build token budget state

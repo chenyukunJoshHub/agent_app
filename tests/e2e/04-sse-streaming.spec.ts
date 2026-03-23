@@ -6,9 +6,7 @@ import { waitForMessageContent } from './helpers';
  *
  * 验收标准：
  * - 思考过程实时显示
- * - 工具调用状态实时更新
- * - Token 使用进度条更新
- * - 连接断开后能重连
+ * - Context 面板 token 使用进度更新
  */
 test.describe('SSE Streaming', () => {
   test.beforeEach(async ({ page }) => {
@@ -26,28 +24,26 @@ test.describe('SSE Streaming', () => {
     await expect(input).toBeEnabled({ timeout: 120000 });
   });
 
-  test('应该显示 Token 使用进度', async ({ page }) => {
+  test('应该在 Context 面板显示 Token 使用进度', async ({ page }) => {
     const message = '请详细解释机器学习的概念';
 
     await page.getByPlaceholder(/描述任务/i).fill(message);
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 验证 Token 进度条出现
-    const tokenBar = page.getByTestId(/token-bar|token-usage/i);
-    await expect(tokenBar).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /context/i }).click();
+    const contextPanel = page.getByTestId('context-window-panel');
+    await expect(contextPanel).toBeVisible({ timeout: 5000 });
+    await expect(contextPanel.getByTestId('overall-progress-fill')).toBeVisible();
   });
 
-  test('SSE 连接断开应该能重连', async ({ page }) => {
-    // 模拟网络断开后重连的场景
-    // 这个测试需要 mock 网络条件
+  test('流式完成后输入框应恢复可编辑', async ({ page }) => {
     const message = '测试连接稳定性';
 
     await page.getByPlaceholder(/描述任务/i).fill(message);
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 验证连接状态指示器
-    const connectionStatus = page.getByTestId(/connection-status/i);
-    await expect(connectionStatus).toBeVisible();
+    const input = page.getByPlaceholder(/描述任务/i);
+    await expect(input).toBeEnabled({ timeout: 120000 });
   });
 
   test('应该显示流式返回的内容', async ({ page }) => {

@@ -50,6 +50,8 @@ export interface UsageMetrics {
   input_budget: number;
   /** Output reservation */
   output_reserve: number;
+  /** Reserved buffer before triggering auto-compaction */
+  autocompact_buffer?: number;
 }
 
 export interface TokenBudgetState {
@@ -148,4 +150,3 @@ export const SLOT_DISPLAY_NAMES: Record<keyof SlotAllocation, string> = {
   output_format: '输出格式',
   user_input: '用户输入',
 } as const;
-

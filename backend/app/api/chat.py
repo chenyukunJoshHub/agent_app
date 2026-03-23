@@ -73,7 +73,7 @@ async def _format_sse_event(event_type: str, data: dict[str, Any]) -> str:
     Format data as SSE event.
 
     Args:
-        event_type: Event type (thought, tool_start, tool_result, done, error)
+        event_type: Event type (trace_event, thought, context_window, slot_details, done, error)
         data: Event payload
 
     Returns:
@@ -231,24 +231,11 @@ async def _execute_agent(
 
             # Process each message in the chunk
             for msg in chunk_messages:
-                # Handle AIMessage with tool calls
+                # Emit tool trace events for chain panel observability
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
-                        seq += 1
                         tool_name = tool_call.get("name", "unknown")
                         tool_args = tool_call.get("args", {})
-
-                        # Push tool_start event
-                        await event_queue.put(
-                            (
-                                "tool_start",
-                                {
-                                    "tool_name": tool_name,
-                                    "args": tool_args,
-                                    "seq": seq,
-                                },
-                            )
-                        )
                         logger.debug(f"Tool start: {tool_name}")
                         await emit_trace_event(
                             event_queue,
@@ -279,17 +266,6 @@ async def _execute_agent(
                     # Extract tool_call_id to identify which tool
                     tool_call_id = getattr(msg, "tool_call_id", None)
                     if tool_call_id:
-                        seq += 1
-                        await event_queue.put(
-                            (
-                                "tool_result",
-                                {
-                                    "tool_name": "tool",  # Could be enhanced to map tool_call_id to name
-                                    "result": str(msg.content),
-                                    "seq": seq,
-                                },
-                            )
-                        )
                         logger.debug(f"Tool result: {msg.content[:100]}...")
                         await emit_trace_event(
                             event_queue,
@@ -331,7 +307,7 @@ async def chat(
     """
     Chat endpoint with SSE streaming.
 
-    P0: Streams thought, tool_start, tool_result, done events.
+    P0: Streams trace_event, thought, slot_details, context_window, done events.
 
     Note: Uses GET method for SSE compatibility (EventSource only supports GET).
     Sensitive data should be avoided in query params for production.

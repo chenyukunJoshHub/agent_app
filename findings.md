@@ -5,6 +5,30 @@
 
 ---
 
+## Session Findings (2026-03-24)
+
+### 问题
+前端右侧 Context 面板与链路面板的 `slot snapshot` 来源不一致，导致识别结果偏差；同时页面存在已失效历史功能（右上角状态区、右栏 timeline/tools）。
+
+### 查阅章节
+- Prompt v20 §1.2（10 个 Slot 与 Context Window 分区）
+- Prompt v20 §1.3（预算与弹性空间）
+
+### 结论
+1. Context 与链路必须共用同一份 slot 快照源（`slot_details`）；
+2. Context 概览层在完整 slot 之外，额外展示 `Free space` 与 `Autocompact buffer`；
+3. 删除无效历史能力后，主流式观测统一到 `trace_event`，不再维护独立 `tool_start/tool_result` UI 通道。
+
+### 影响文件
+- `frontend/src/components/ContextWindowPanel.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/store/use-session.ts`
+- `backend/app/agent/langchain_engine.py`
+- `backend/app/api/context.py`
+- `backend/app/api/chat.py`
+
+---
+
 ## Requirements
 
 ### 产品需求

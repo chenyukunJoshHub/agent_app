@@ -5,6 +5,64 @@
 
 ---
 
+## Session: 2026-03-24 (UI 清理 + Context 对齐) ✅
+
+### 本次目标
+- 去掉前端无效历史能力：右上角状态区、右栏 `时间轴/工具` tab。
+- 清理对应冗余实现（前端状态 + 后端 SSE 专用事件通道）。
+- 强化右侧 Context 面板：补齐 `Free space`、`Autocompact buffer`，并与链路面板使用同源 slot 快照。
+
+### 完成项
+- 前端页面结构重构（`frontend/src/app/page.tsx`）：
+  - 删除右上角 `TokenBar + 连接状态`；
+  - 删除右栏 `timeline/tools` 选项，仅保留 `链路 + Context`；
+  - Context 面板改为传入 `slotDetails`，与链路快照同源。
+- 前端状态精简（`frontend/src/store/use-session.ts`）：
+  - 删除 `timelineEvents` 状态和相关 action。
+- Context 面板增强（`frontend/src/components/ContextWindowPanel.tsx`）：
+  - 新增 `Estimated usage by category`；
+  - 新增 `Free space`、`Autocompact buffer`；
+  - 新增“完整 Slot 快照”区块，优先展示 `slotDetails`。
+- 后端上下文增强：
+  - `backend/app/api/context.py` 增加 `usage.autocompact_buffer`；
+  - `backend/app/agent/langchain_engine.py` 的 `context_window` 事件补充 `autocompact_buffer` 与 `slotDetails`。
+- 后端冗余流事件收敛（`backend/app/api/chat.py`）：
+  - 主 SSE 流删除 `tool_start/tool_result` 专用事件推送，仅保留 trace 通道用于链路面板。
+- 过时组件清理：
+  - 删除 `frontend/src/components/Timeline.tsx`
+  - 删除 `frontend/src/components/ToolCallTrace.tsx`
+  - 删除 `frontend/src/components/TokenBar.tsx`
+
+### 测试与验证
+- ✅ 前端组件测试：
+  - `ContextWindowPanel.test.tsx`
+  - `SlotBar.test.tsx`
+  - `CompressionLog.test.tsx`
+  - `sse-manager.test.ts`
+- ✅ 前端构建：`cd frontend && npm run build`
+- ✅ 后端 API 测试：
+  - `backend/tests/unit/api/test_context.py`
+  - `backend/tests/integration/test_context_api.py`
+- ⚠️ 说明：`tests/backend/unit/api/test_chat.py` 与 `tests/backend/unit/agent/test_langchain_engine.py` 存在大量历史不一致（与本次改动无关）未在本轮收敛。
+
+### 本次变更文件（核心）
+- `frontend/src/app/page.tsx`
+- `frontend/src/store/use-session.ts`
+- `frontend/src/components/ContextWindowPanel.tsx`
+- `frontend/src/lib/sse-manager.ts`
+- `frontend/src/types/context-window.ts`
+- `backend/app/api/context.py`
+- `backend/app/agent/langchain_engine.py`
+- `backend/app/api/chat.py`
+- `tests/components/context-window/*.test.tsx`
+- `tests/components/lib/sse-manager.test.ts`
+- `tests/e2e/03-tool-trace.spec.ts`
+- `tests/e2e/04-sse-streaming.spec.ts`
+- `tests/e2e/06-context-window.spec.ts`
+- `tests/e2e/08-slot-details.spec.ts`
+
+---
+
 ## Session: 2026-03-23 (Phase 14 - Slot Token 统计功能) ✅ **COMPLETED**
 
 ### Phase 14: 实时 Slot Token 统计功能 ✅

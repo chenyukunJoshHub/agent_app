@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-03-24 会话同步（维护迭代）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: 去除无效历史功能 + Context Usage 面板对齐
+
+### 已完成
+- 右上角状态区移除；
+- 右栏 `timeline/tools` 功能移除（仅保留 `链路 + Context`）；
+- Context 面板新增 `Free space / Autocompact buffer`；
+- Context 与链路面板统一使用 `slot_details` 快照来源；
+- 后端主 SSE 流收敛（移除冗余 `tool_start/tool_result` 专用推送）。
+
+### 阻塞
+- 无新增阻塞。
+
+---
+
 ## 📋 项目概述
 
 ### 核心目标

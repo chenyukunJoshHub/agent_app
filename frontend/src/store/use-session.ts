@@ -6,7 +6,6 @@
  */
 import { create } from 'zustand';
 
-import type { TimelineEvent } from '@/components/Timeline';
 import type { ContextWindowData } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
 
@@ -29,9 +28,6 @@ export interface ToolCall {
 export interface SessionState {
   // Messages
   messages: Message[];
-
-  // Timeline events
-  timelineEvents: TimelineEvent[];
 
   // Token usage
   tokenUsed: number;
@@ -61,8 +57,6 @@ export interface SessionState {
   // Actions
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   updateToolCall: (messageId: string, toolCallId: string, update: Partial<ToolCall>) => void;
-  addTimelineEvent: (event: Omit<TimelineEvent, 'id' | 'timestamp'>) => void;
-  clearTimelineEvents: () => void;
   setTokenUsed: (used: number) => void;
   setContextWindowData: (data: ContextWindowData | null) => void;
   setSlotDetails: (
@@ -85,7 +79,6 @@ export interface SessionState {
 export const useSession = create<SessionState>((set, _get) => ({
   // Initial state
   messages: [],
-  timelineEvents: [],
   tokenUsed: 0,
   tokenBudget: 32000,
   contextWindowData: null,
@@ -124,19 +117,6 @@ export const useSession = create<SessionState>((set, _get) => ({
     }));
   },
 
-  addTimelineEvent: (event) => {
-    const newEvent: TimelineEvent = {
-      ...event,
-      id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: Date.now(),
-    };
-    set((state) => ({
-      timelineEvents: [...state.timelineEvents, newEvent],
-    }));
-  },
-
-  clearTimelineEvents: () => set({ timelineEvents: [] }),
-
   setTokenUsed: (used) => set({ tokenUsed: used }),
 
   setContextWindowData: (data) => set({ contextWindowData: data }),
@@ -161,7 +141,6 @@ export const useSession = create<SessionState>((set, _get) => ({
   clearMessages: () =>
     set({
       messages: [],
-      timelineEvents: [],
       traceEvents: [],
       tokenUsed: 0,
       contextWindowData: null,

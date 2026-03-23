@@ -2,10 +2,11 @@
  * ContextWindowPanel Component Tests
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import { ContextWindowPanel } from '../ContextWindowPanel';
-import type { ContextWindowData } from '@/types/context-window';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
+
+import { ContextWindowPanel } from '@/components/ContextWindowPanel';
+import type { ContextWindowData, SlotDetail } from '@/types/context-window';
 
 describe('ContextWindowPanel', () => {
   const mockData: ContextWindowData = {
@@ -29,6 +30,7 @@ describe('ContextWindowPanel', () => {
         total_remaining: 27768,
         input_budget: 24576,
         output_reserve: 8192,
+        autocompact_buffer: 4096,
       },
     },
     slotUsage: [
@@ -64,28 +66,58 @@ describe('ContextWindowPanel', () => {
     compressionEvents: [],
   };
 
+  const mockSlotDetails: SlotDetail[] = [
+    {
+      name: 'system',
+      display_name: '系统提示词（基础）',
+      content: '系统角色定义',
+      tokens: 1200,
+      enabled: true,
+    },
+    {
+      name: 'skill_registry',
+      display_name: 'Skill 注册表',
+      content: '可用技能列表',
+      tokens: 300,
+      enabled: true,
+    },
+    {
+      name: 'tools',
+      display_name: '工具定义',
+      content: 'web_search, send_email, read_file',
+      tokens: 800,
+      enabled: true,
+    },
+    {
+      name: 'history',
+      display_name: '会话历史',
+      content: '历史消息内容',
+      tokens: 2400,
+      enabled: true,
+    },
+  ];
+
   describe('Rendering', () => {
-    it('should render the header with model specs', () => {
-      render(<ContextWindowPanel data={mockData} />);
-      expect(screen.getByText('Context Window')).toBeInTheDocument();
-      expect(screen.getByText(/Token 预算: 32.8k/)).toBeInTheDocument();
-      expect(screen.getByText(/模型上限: 200k/)).toBeInTheDocument();
+    it('should render context usage header', () => {
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
+      expect(screen.getByText('Context Usage')).toBeInTheDocument();
+      expect(screen.getByText(/5.0k\/32.8k tokens/)).toBeInTheDocument();
     });
 
-    it('should render overall progress section', () => {
-      render(<ContextWindowPanel data={mockData} />);
-      expect(screen.getByText('总体进度')).toBeInTheDocument();
-      expect(screen.getByTestId('overall-progress-fill')).toBeInTheDocument();
+    it('should render free space and autocompact rows', () => {
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
+      expect(screen.getByTestId('context-row-free-space')).toBeInTheDocument();
+      expect(screen.getByTestId('context-row-autocompact-buffer')).toBeInTheDocument();
     });
 
-    it('should render slot breakdown section', () => {
-      render(<ContextWindowPanel data={mockData} />);
-      expect(screen.getByText('Slot 分解')).toBeInTheDocument();
+    it('should render complete slot snapshot section', () => {
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
+      expect(screen.getByText('完整 Slot 快照')).toBeInTheDocument();
       expect(screen.getByTestId('slot-breakdown')).toBeInTheDocument();
     });
 
     it('should render statistics row', async () => {
-      render(<ContextWindowPanel data={mockData} />);
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('stat-input-budget')).toBeInTheDocument();
       expect(screen.getByTestId('stat-output-reserve')).toBeInTheDocument();
       expect(screen.getByTestId('stat-total-used')).toBeInTheDocument();
@@ -93,7 +125,7 @@ describe('ContextWindowPanel', () => {
     });
 
     it('should render compression log section', () => {
-      render(<ContextWindowPanel data={mockData} />);
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       expect(screen.getByText('压缩事件日志')).toBeInTheDocument();
       expect(screen.getByText('暂无压缩事件')).toBeInTheDocument();
     });
@@ -101,35 +133,34 @@ describe('ContextWindowPanel', () => {
 
   describe('Usage Calculation', () => {
     it('should display correct usage percentage', () => {
-      render(<ContextWindowPanel data={mockData} />);
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       // 5000 / 32768 * 100 = 15.26%
       expect(screen.getByTestId('overall-percentage')).toHaveTextContent(/15.3%/);
     });
 
     it('should display correct remaining tokens', () => {
-      render(<ContextWindowPanel data={mockData} />);
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('overall-remaining')).toHaveTextContent(/27.8k/);
     });
 
     it('should show "正常" status when usage < 70%', () => {
-      render(<ContextWindowPanel data={mockData} />);
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('overall-status')).toHaveTextContent('正常');
     });
   });
 
-  describe('Slot Bars', () => {
-    it('should render all slot bars', () => {
-      render(<ContextWindowPanel data={mockData} />);
-      expect(screen.getByText('系统提示词')).toBeInTheDocument();
-      expect(screen.getByText('用户画像')).toBeInTheDocument();
-      expect(screen.getByText('工具定义')).toBeInTheDocument();
-      expect(screen.getByText('会话历史')).toBeInTheDocument();
+  describe('Category Consistency', () => {
+    it('should aggregate category usage from slot snapshot data', () => {
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
+      expect(screen.getByTestId('context-row-system')).toBeInTheDocument();
+      expect(screen.getByTestId('context-row-tools')).toBeInTheDocument();
+      expect(screen.getByTestId('context-row-history')).toBeInTheDocument();
     });
 
-    it('should display correct slot usage', () => {
-      render(<ContextWindowPanel data={mockData} />);
-      expect(screen.getByTestId('slot-used-tokens', { selector: '[data-slot-name="system"]' }))
-        ?.toHaveTextContent('1.5k');
+    it('should show slot detail names from the same snapshot source', () => {
+      render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
+      expect(screen.getByText('系统提示词（基础）')).toBeInTheDocument();
+      expect(screen.getByText('Skill 注册表')).toBeInTheDocument();
     });
   });
 
@@ -168,11 +199,12 @@ describe('ContextWindowPanel', () => {
             ...mockData.budget.usage,
             total_used: 24000, // 73% usage
             total_remaining: 8768,
+            autocompact_buffer: 4096,
           },
         },
       };
 
-      render(<ContextWindowPanel data={highUsageData} />);
+      render(<ContextWindowPanel data={highUsageData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('overall-status')).toHaveTextContent('使用较多');
     });
 
@@ -185,11 +217,12 @@ describe('ContextWindowPanel', () => {
             ...mockData.budget.usage,
             total_used: 30000, // 91.5% usage
             total_remaining: 2768,
+            autocompact_buffer: 4096,
           },
         },
       };
 
-      render(<ContextWindowPanel data={criticalUsageData} />);
+      render(<ContextWindowPanel data={criticalUsageData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('overall-status')).toHaveTextContent('即将耗尽');
     });
   });
