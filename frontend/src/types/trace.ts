@@ -8,5 +8,6 @@ export interface TraceEvent {
   step: string;
   status: 'start' | 'ok' | 'skip' | 'error' | string;
   payload: Record<string, unknown>;
+  turnId?: string;  // 新增：前端标注的 turn 归属
 }
 
