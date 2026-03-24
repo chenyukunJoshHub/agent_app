@@ -243,17 +243,50 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             </motion.div>
           </div>
 
-          {/* Percentage and remaining */}
-          <div className="mt-2 flex items-center justify-between text-xs">
-            <span className="text-text-muted" data-testid="overall-percentage">
-              {usagePercentage.toFixed(1)}% 已使用
-            </span>
-            <span
-              className={cn('font-medium tabular-nums', statusConfig.text)}
-              data-testid="overall-remaining"
+            {/* Percentage and remaining */}
+            <div className="mt-2 flex items-center justify-between text-xs">
+              <span className="text-text-muted">
+                {usagePercentage.toFixed(1)}% 已使用
+              </span>
+              <span className="text-xs text-text-muted">
+                {formatNumber(budget.usage.total_remaining)} 剩余
+              </span>
+            </div>
+
+            {/* Reserved Buffer */}
+            <div
+              className="flex items-center justify-between text-sm border-t border-border pt-2"
+              data-testid="context-row-reserved-buffer"
             >
-              {formatNumber(budget.usage.total_remaining)} 剩余
-            </span>
+              <span className="text-text-secondary">预留 Buffer</span>
+              <span className="text-xs text-text-primary tabular-nums">
+                {formatNumber(reservedBuffer)} ({totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%
+              </span>
+            </div>
+
+            {/* Actual Savings */}
+            {actualSavings > 0 && (
+              <div
+                className="flex items-center justify-between text-sm"
+                data-testid="context-row-actual-savings"
+              >
+                <span className="text-text-secondary">实际节省</span>
+                <span className="text-xs text-primary tabular-nums text-success-text">
+                  -{formatNumber(actualSavings)} ({compressionEvents.length} 次事件)
+                </span>
+              </div>
+            )}
+
+            {/* Free Space */}
+            <div
+              className="flex items-center justify-between text-sm border-t border-border pt-2"
+              data-testid="context-row-free-space"
+            >
+              <span className="text-text-secondary">Free space</span>
+              <span className="text-xs text-primary tabular-nums">
+                {formatNumber(freeSpace)} ({totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%
+              </span>
+            </div>
           </div>
         </div>
 
