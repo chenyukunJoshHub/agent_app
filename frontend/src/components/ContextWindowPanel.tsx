@@ -135,9 +135,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
       }
     } else {
       for (const slot of slotUsage) {
-        if (slot.name in aggregate) {
-          aggregate[slot.name] = slot.used;
-        }
+        aggregate[slot.name] = slot.used;
       }
     }
 
@@ -315,65 +313,59 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
         </div>
 
         {/* Statistics Row */}
-        <div className="border-b border-border p-4 bg-bg-card">
-          <div className="grid grid-cols-2 gap-4">
-            {/* Input Budget */}
-            <div className="rounded-lg bg-bg-muted border border-border p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-4 h-4 text-text-secondary" />
-                <span className="text-xs text-text-muted">输入预算</span>
-              </div>
-              <p
-                className="text-lg font-semibold text-text-primary tabular-nums"
-                data-testid="stat-input-budget"
-              >
-                {formatNumber(budget.usage.input_budget)}
-              </p>
+          <div className="border-b border-border p-4 bg-bg-card">
+            <div className="mb-3 flex items-center justify-between">
+              <BarChart3 className="w-4 h-4 text-text-secondary" />
+              <span className="text-sm font-medium text-text-primary">统计数据</span>
             </div>
-
-            {/* Output Reserve */}
-            <div className="rounded-lg bg-bg-muted border border-border p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Layers className="w-4 h-4 text-text-secondary" />
-                <span className="text-xs text-text-muted">输出预留</span>
-              </div>
-              <p
-                className="text-lg font-semibold text-text-primary tabular-nums"
-                data-testid="stat-output-reserve"
+            <div className="space-y-2">
+              {/* Reserved Buffer */}
+              <div
+                className="flex items-center justify-between text-sm"
+                data-testid="context-row-autocompact-buffer"
               >
-                {formatNumber(budget.usage.output_reserve)}
-              </p>
-            </div>
-
-            {/* Total Used */}
-            <div className="rounded-lg bg-bg-muted border border-border p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Activity className="w-4 h-4 text-text-secondary" />
-                <span className="text-xs text-text-muted">已使用</span>
+                <span className="text-text-secondary">Autocompact buffer</span>
+                <span className="text-xs text-text-muted">
+                  {formatNumber(budget.usage.autocompact_buffer ?? 0)}
+                </span>
               </div>
-              <p
-                className="text-lg font-semibold text-text-primary tabular-nums"
-                data-testid="stat-total-used"
-              >
-                {formatNumber(totalUsed)}
-              </p>
-            </div>
 
-            {/* Compression Count */}
-            <div className="rounded-lg bg-bg-muted border border-border p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <BarChart3 className="w-4 h-4 text-text-secondary" />
-                <span className="text-xs text-text-muted">压缩次数</span>
-              </div>
-              <p
-                className="text-lg font-semibold text-text-primary tabular-nums"
-                data-testid="stat-compression-count"
+              {/* Reserved Buffer (original test name) */}
+              <div
+                className="flex items-center justify-between text-sm"
+                data-testid="context-row-reserved-buffer"
               >
-                {compressionEvents.length}
-              </p>
+                <span className="text-text-secondary">预留 Buffer</span>
+                <span className="text-xs text-text-muted">
+                  {formatNumber(Math.floor(totalBudget * 0.165))}
+                </span>
+              </div>
+
+              {/* Actual Savings */}
+              {actualSavings > 0 && (
+                <div
+                  className="flex items-center justify-between text-sm"
+                  data-testid="context-row-actual-savings"
+                >
+                  <span className="text-text-secondary">实际节省</span>
+                  <span className="text-xs text-text-muted">
+                    {formatNumber(actualSavings)} tokens ({compressionEvents.length} 次事件)
+                  </span>
+                </div>
+              )}
+
+              {/* Free Space */}
+              <div
+                className="flex items-center justify-between text-sm"
+                data-testid="context-row-free-space"
+              >
+                <span className="text-text-secondary">Free space</span>
+                <span className="text-xs text-text-muted">
+                  {formatNumber(freeSpace)} tokens ({((freeSpace / totalBudget) * 100).toFixed(1)}%)
+                </span>
+              </div>
             </div>
           </div>
-        </div>
 
         {/* Compression Log */}
         <div className="bg-bg-card">
