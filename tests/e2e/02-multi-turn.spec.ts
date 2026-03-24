@@ -23,14 +23,14 @@ test.describe('Multi-Turn Conversation', () => {
     await page.getByRole('button', { name: /发送/i }).click();
 
     // 等待首轮结束（输入框恢复可编辑；勿仅用「张三」匹配——用户消息里已含该字）
-    await expect(chatInput).toBeEnabled({ timeout: 120000 });
+    await expect(chatInput).toBeEnabled({ timeout: 180000 });
 
     // 第二轮对话
     await chatInput.fill(secondMessage);
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 验证 Agent 记住了用户的名字（依赖 LLM 回复，给足时间）
-    await expect(page.getByText(/张三/i)).toBeVisible({ timeout: 120000 });
+    // 验证 Agent 记住了用户的名字（依赖 Ollama 本地模型回复，给足时间）
+    await expect(page.getByText(/张三/i)).toBeVisible({ timeout: 180000 });
   });
 
   test('聊天历史应该按时间顺序显示', async ({ page }) => {
@@ -38,7 +38,7 @@ test.describe('Multi-Turn Conversation', () => {
 
     const input = page.getByPlaceholder(/描述任务/i);
     for (const message of messages) {
-      await expect(input).toBeEnabled({ timeout: 120000 });
+      await expect(input).toBeEnabled({ timeout: 180000 });
       await input.fill(message);
       await page.getByRole('button', { name: /发送/i }).click();
       await expect(page.getByText(message)).toBeVisible();

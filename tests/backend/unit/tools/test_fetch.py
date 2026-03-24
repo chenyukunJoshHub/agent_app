@@ -228,3 +228,75 @@ class TestFetchUrlToolEdgeCases:
 
         result = fetch_url.invoke({"url": "https://example.com/redirect"})
         assert result == "Final content"
+
+
+class TestFetchUrlSSRFProtection:
+    """Test SSRF protection in fetch_url."""
+
+    def test_blocks_private_ip_10_range(self) -> None:
+        """Test that fetch_url blocks private IP (10.x.x.x)."""
+        from app.tools.fetch import fetch_url
+        from app.tools._url_safety import UnsafeURLError
+
+        with pytest.raises(UnsafeURLError, match="private"):
+            fetch_url.invoke({"url": "http://10.0.0.1"})
+
+    def test_blocks_private_ip_192_168_range(self) -> None:
+        """Test that fetch_url blocks private IP (192.168.x.x)."""
+        from app.tools.fetch import fetch_url
+        from app.tools._url_safety import UnsafeURLError
+
+        with pytest.raises(UnsafeURLError, match="private"):
+            fetch_url.invoke({"url": "http://192.168.1.1"})
+
+    def test_blocks_localhost(self) -> None:
+        """Test that fetch_url blocks localhost."""
+        from app.tools.fetch import fetch_url
+        from app.tools._url_safety import UnsafeURLError
+
+        with pytest.raises(UnsafeURLError, match="private"):
+            fetch_url.invoke({"url": "http://localhost:8000"})
+
+    def test_blocks_link_local_metadata(self) -> None:
+        """Test that fetch_url blocks link-local metadata endpoint."""
+        from app.tools.fetch import fetch_url
+        from app.tools._url_safety import UnsafeURLError
+
+        with pytest.raises(UnsafeURLError, match="private"):
+            fetch_url.invoke({"url": "http://169.254.169.254/latest/meta-data/"})
+
+    def test_blocks_invalid_scheme(self) -> None:
+        """Test that fetch_url blocks invalid schemes."""
+        from app.tools.fetch import fetch_url
+        from app.tools._url_safety import UnsafeURLError
+
+        with pytest.raises(UnsafeURLError, match="scheme"):
+            fetch_url.invoke({"url": "file:///etc/passwd"})
+
+    @patch("app.tools.fetch.httpx.get")
+    def test_allows_normal_https_url(self, mock_get: Mock) -> None:
+        """Test that fetch_url allows normal HTTPS URLs."""
+        from app.tools.fetch import fetch_url
+
+        mock_response = Mock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        mock_get.return_value = mock_response
+
+        result = fetch_url.invoke({"url": "https://example.com"})
+        assert result == "OK"
+        mock_get.assert_called_once()
+
+    @patch("app.tools.fetch.httpx.get")
+    def test_allows_normal_http_url(self, mock_get: Mock) -> None:
+        """Test that fetch_url allows normal HTTP URLs."""
+        from app.tools.fetch import fetch_url
+
+        mock_response = Mock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        mock_get.return_value = mock_response
+
+        result = fetch_url.invoke({"url": "http://example.com"})
+        assert result == "OK"
+        mock_get.assert_called_once()

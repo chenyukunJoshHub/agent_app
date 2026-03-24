@@ -20,8 +20,8 @@ test.describe('SSE Streaming', () => {
     await input.fill(message);
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 一轮对话结束：输入应恢复可编辑（依赖后端 + LLM）
-    await expect(input).toBeEnabled({ timeout: 120000 });
+    // 一轮对话结束：输入应恢复可编辑（依赖后端 + Ollama 本地模型）
+    await expect(input).toBeEnabled({ timeout: 180000 });
   });
 
   test('应该在 Context 面板显示 Token 使用进度', async ({ page }) => {
@@ -32,7 +32,7 @@ test.describe('SSE Streaming', () => {
 
     await page.getByRole('button', { name: /context/i }).click();
     const contextPanel = page.getByTestId('context-window-panel');
-    await expect(contextPanel).toBeVisible({ timeout: 5000 });
+    await expect(contextPanel).toBeVisible({ timeout: 10000 });
     await expect(contextPanel.getByTestId('overall-progress-fill')).toBeVisible();
   });
 
@@ -43,7 +43,7 @@ test.describe('SSE Streaming', () => {
     await page.getByRole('button', { name: /发送/i }).click();
 
     const input = page.getByPlaceholder(/描述任务/i);
-    await expect(input).toBeEnabled({ timeout: 120000 });
+    await expect(input).toBeEnabled({ timeout: 180000 });
   });
 
   test('应该显示流式返回的内容', async ({ page }) => {
@@ -54,10 +54,10 @@ test.describe('SSE Streaming', () => {
 
     // 等待输入框恢复（表示对话完成）
     const input = page.getByPlaceholder(/描述任务/i);
-    await expect(input).toBeEnabled({ timeout: 120000 });
+    await expect(input).toBeEnabled({ timeout: 180000 });
 
     // 使用辅助函数检查消息内容
-    const hasContent = await waitForMessageContent(page, { timeout: 15000 });
+    const hasContent = await waitForMessageContent(page, { timeout: 30000 });
 
     // 允许纯思考内容（不一定有实际回复）
     // 只要消息元素存在且有内容即可

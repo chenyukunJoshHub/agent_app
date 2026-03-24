@@ -99,8 +99,8 @@ test.describe('Skills Panel', () => {
     await page.getByPlaceholder(/描述任务/i).fill('搜索法律相关的信息');
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 等待对话完成
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 60000 });
+    // 等待对话完成（Ollama 本地模型）
+    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
 
     // 检查是否有 Skill 显示为 ACTIVE 状态
     const activeSkill = skillsPanel.locator('[class*="active"], [data-testid*="active"], [class*="ACTIVE"]');
@@ -125,8 +125,8 @@ test.describe('Skills Panel', () => {
     await page.getByPlaceholder(/描述任务/i).fill('搜索法律相关的信息');
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 等待对话完成
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 60000 });
+    // 等待对话完成（Ollama 本地模型）
+    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
 
     // 检查 Context Window 中的 Skills Slot
     const skillsSlot = contextPanel.locator('[data-testid*="skill"], [class*="skill"]').filter({ hasText: /legal-search|skill/i });

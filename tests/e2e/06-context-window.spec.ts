@@ -42,8 +42,8 @@ test.describe('Context Window', () => {
     await page.getByPlaceholder(/描述任务/i).fill('测试消息');
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 等待对话完成
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 60000 });
+    // 等待对话完成（Ollama 本地模型）
+    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
 
     // 检查进度条是否更新
     const progressBar = contextPanel.locator('[class*="progress"], [data-testid*="progress"]');
@@ -86,7 +86,7 @@ test.describe('Context Window', () => {
     for (let i = 0; i < 5; i++) {
       await page.getByPlaceholder(/描述任务/i).fill(`测试消息 ${i + 1}`);
       await page.getByRole('button', { name: /发送/i }).click();
-      await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 60000 });
+      await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
     }
 
     // 检查是否有警告标识
