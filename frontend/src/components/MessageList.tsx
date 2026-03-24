@@ -5,10 +5,13 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { StateMessage, CompressionEvent } from '@/types/context-window';
 
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
+  stateMessages?: StateMessage[];         // 新增
+  compressionEvents?: CompressionEvent[]; // 新增
 }
 
 function MessageBubble({ message, index }: { message: Message; index: number }) {
@@ -101,70 +104,82 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
             {toolCall.tool_name}
           </span>
         </div>
-        <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', config.color)}>
-          {config.label}
-        </span>
-      </div>
-
-      {/* Args */}
-      {toolCall.args && (
-        <div className="mb-2">
+        <div className="flex items-center gap-2">
+          <span className={cn('text-[10px] px-1.5 py-0.5 rounded', config.color)}>
+            {config.label}
+          </span>
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="cursor-pointer text-xs text-muted-foreground
-                           hover:text-text-secondary transition-colors flex items-center gap-1"
+            className="text-text-muted hover:text-text-primary"
           >
             {isExpanded ? (
               <ChevronDown className="w-3 h-3" />
             ) : (
               <ChevronRight className="w-3 h-3" />
             )}
-            参数
           </button>
-          {isExpanded && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              className="mt-2"
-            >
-              <pre
-                className="overflow-x-auto rounded-lg bg-background p-2 text-xs
-                           border border-border"
-              >
-                {JSON.stringify(toolCall.args, null, 2)}
-              </pre>
-            </motion.div>
-          )}
         </div>
-      )}
-
-      {/* Result */}
-      {toolCall.result && (
-        <div>
-          <details open>
-            <summary
-              className="cursor-pointer text-xs text-muted-foreground
-                            hover:text-text-secondary transition-colors flex items-center gap-1"
-            >
-              <ChevronDown className="w-3 h-3" />
-              结果
-            </summary>
-            <div
-              className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-background p-2 text-xs
-                        border border-border"
-            >
-              {typeof toolCall.result === 'string'
-                ? toolCall.result
-                : JSON.stringify(toolCall.result, null, 2)}
+      </div>
+      {isExpanded && (
+        <div className="bg-bg-muted rounded-lg p-2 text-xs font-mono text-text-secondary">
+          <pre className="whitespace-pre-wrap break-all">
+            {JSON.stringify(toolCall.args, null, 2)}
+          </pre>
+          {toolCall.result && (
+            <div className="mt-2 pt-2 border-t border-border">
+              <div className="text-text-muted mb-1">Result:</div>
+              <pre className="whitespace-pre-wrap break-all">
+                {typeof toolCall.result === 'string'
+                  ? toolCall.result
+                  : JSON.stringify(toolCall.result, null, 2)}
+              </pre>
             </div>
-          </details>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function MessageList({ messages, isLoading }: MessageListProps) {
+function ToolMessageBubble({ msg }: { msg: StateMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div
+      data-testid="tool-message-bubble"
+      className="flex gap-3 mb-3"
+    >
+      <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-bg-muted border border-border flex items-center justify-center">
+        <Wrench className="w-4 h-4 text-text-muted" />
+      </div>
+      <div className="max-w-[80%] rounded-xl bg-bg-muted border border-border px-3 py-2">
+        <p className="text-[11px] text-text-muted mb-1">工具返回</p>
+        <button
+          className="text-xs text-text-secondary text-left"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? msg.content : (msg.content || '').slice(0, 100) + ((msg.content || '').length > 100 ? '...' : '')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CompressionNotification({ event }: { event: CompressionEvent }) {
+  return (
+    <div
+      data-testid="compression-notification"
+      className="flex items-center gap-2 my-3 px-4"
+    >
+      <div className="flex-1 h-px bg-border" />
+      <span className="text-xs text-text-muted shrink-0">
+        💾 历史已压缩 · 节省 {event.tokens_saved.toLocaleString()} tokens ({event.method})
+      </span>
+      <div className="flex-1 h-px bg-border" />
+    </div>
+  );
+}
+
+export function MessageList({ messages, isLoading, stateMessages = [], compressionEvents = [] }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -193,10 +208,24 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
               </div>
             </motion.div>
           ) : (
-            messages.map((message, index) => (
-              <MessageBubble key={message.id} message={message} index={index} />
-            ))
+            messages
+              .filter(msg => msg.content.trim() !== '' || msg.role === 'user')
+              .map((message, index) => (
+                <MessageBubble key={message.id} message={message} index={index} />
+              ))
           )}
+
+          {/* tool role 消息气泡（来自 stateMessages） */}
+          {stateMessages
+            .filter(m => m.role === 'tool')
+            .map((msg, i) => (
+              <ToolMessageBubble key={`tool_${i}`} msg={msg} />
+            ))}
+
+          {/* 压缩通知气泡 */}
+          {compressionEvents.map(event => (
+            <CompressionNotification key={event.id} event={event} />
+          ))}
         </AnimatePresence>
 
         {isLoading && (

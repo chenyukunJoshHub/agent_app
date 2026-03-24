@@ -3,10 +3,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 import { ContextWindowPanel } from '@/components/ContextWindowPanel';
 import type { ContextWindowData, SlotDetail } from '@/types/context-window';
+import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
 
 describe('ContextWindowPanel', () => {
   const mockData: ContextWindowData = {
@@ -224,6 +225,36 @@ describe('ContextWindowPanel', () => {
 
       render(<ContextWindowPanel data={criticalUsageData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('overall-status')).toHaveTextContent('即将耗尽');
+    });
+  });
+
+  describe('with EMPTY_CONTEXT_DATA', () => {
+    it('Slot 预算分解区块展示全部 10 行（含 ⑨ 和 ⑩）', () => {
+      render(<ContextWindowPanel data={EMPTY_CONTEXT_DATA} />);
+      // 在 slot-breakdown testid 范围内查找 ⑨/⑩，确保是 Slot 分解区块而非 category 区块
+      const breakdown = screen.getByTestId('slot-breakdown');
+      expect(within(breakdown).getByText(/⑨ 输出格式规范/)).toBeInTheDocument();
+      expect(within(breakdown).getByText(/⑩ 本轮用户输入/)).toBeInTheDocument();
+    });
+
+    it('Slot ⑨ 和 ⑩ 出现在 category 汇总中（当 tokens > 0）', () => {
+      // 给 output_format 和 user_input 注入非零数据以触发 category 显示
+      const data = {
+        ...EMPTY_CONTEXT_DATA,
+        slotUsage: EMPTY_CONTEXT_DATA.slotUsage.map((s: any) =>
+          s.name === 'output_format' ? { ...s, used: 100 } :
+          s.name === 'user_input' ? { ...s, used: 200 } : s
+        ),
+        budget: {
+          ...EMPTY_CONTEXT_DATA.budget,
+          slots: { ...EMPTY_CONTEXT_DATA.budget.slots, output_format: 100, user_input: 200 },
+          usage: { ...EMPTY_CONTEXT_DATA.budget.usage, total_used: 300 },
+        },
+      };
+      render(<ContextWindowPanel data={data} />);
+      // 这两个 data-testid 在 Task 6.3 中新增，此测试在实现前应 FAIL
+      expect(screen.getByTestId('context-row-output_format')).toBeInTheDocument();
+      expect(screen.getByTestId('context-row-user_input')).toBeInTheDocument();
     });
   });
 });

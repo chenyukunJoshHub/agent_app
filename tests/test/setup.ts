@@ -44,6 +44,9 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+// Mock Element.prototype.scrollIntoView
+Element.prototype.scrollIntoView = vi.fn();
+
 // Mock framer-motion to avoid useContext errors
 vi.mock("framer-motion", async () => {
   const actual = await vi.importActual("framer-motion");

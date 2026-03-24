@@ -33,9 +33,15 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
   const totalUsed = budget.usage.total_used;
   const totalBudget = budget.working_budget;
   const usagePercentage = totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0;
-  const autocompactBuffer =
+  
+  // Calculate reserved buffer (预留)
+  const reservedBuffer =
     budget.usage.autocompact_buffer ?? Math.max(0, Math.floor(totalBudget * 0.165));
-  const freeSpace = Math.max(0, totalBudget - totalUsed - autocompactBuffer);
+  
+  // Calculate actual savings from compression events (实际节省)
+  const actualSavings = compressionEvents.reduce((sum, event) => sum + event.tokens_saved, 0);
+  
+  const freeSpace = Math.max(0, totalBudget - totalUsed - reservedBuffer);
 
   // Format numbers
   const formatNumber = (num: number) => {
@@ -77,7 +83,6 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
     system: 'system',
     skill_registry: 'system',
     skill_protocol: 'system',
-    output_format: 'system',
     active_skill: 'active_skill',
     few_shot: 'few_shot',
     rag: 'rag',
@@ -85,7 +90,8 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
     procedural: 'procedural',
     tools: 'tools',
     history: 'history',
-    user_input: 'history',
+    output_format: 'output_format',   // 改：原来映射到 'system'
+    user_input: 'user_input',         // 改：原来映射到 'history'
   };
 
   const categoryLabels: Record<string, string> = {
@@ -97,6 +103,8 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
     procedural: 'Procedural memory',
     tools: 'Tools schema',
     history: 'Messages',
+    output_format: 'Output format',
+    user_input: 'User input',
   };
 
   const categoryUsage = (() => {
@@ -109,6 +117,8 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
       procedural: 0,
       tools: 0,
       history: 0,
+      output_format: 0,
+      user_input: 0,
     };
 
     if (slotDetails && slotDetails.length > 0) {
@@ -182,14 +192,25 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
               </span>
             </div>
             <div
-              className="flex items-center justify-between text-sm"
-              data-testid="context-row-autocompact-buffer"
+              className="flex items-center justify-between text-sm border-t border-border pt-2"
+              data-testid="context-row-reserved-buffer"
             >
-              <span className="text-text-secondary">Autocompact buffer</span>
+              <span className="text-text-secondary">预留 Buffer</span>
               <span className="text-text-primary tabular-nums">
-                {formatNumber(autocompactBuffer)} ({(totalBudget > 0 ? (autocompactBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
+                {formatNumber(reservedBuffer)} ({(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
               </span>
             </div>
+            {actualSavings > 0 && (
+              <div
+                className="flex items-center justify-between text-sm"
+                data-testid="context-row-actual-savings"
+              >
+                <span className="text-text-secondary">实际节省</span>
+                <span className="text-text-primary tabular-nums text-success-text">
+                  -{formatNumber(actualSavings)} ({(totalBudget > 0 ? (actualSavings / totalBudget) * 100 : 0).toFixed(1)}%)
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
