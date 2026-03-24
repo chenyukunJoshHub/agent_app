@@ -14,7 +14,7 @@ import { getChatResumeUrl, getChatStreamUrl } from '@/lib/api-config';
 import { sseManager } from '@/lib/sse-manager';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/store/use-session';
-import type { SlotDetailsResponse } from '@/types/context-window';
+import type { SlotDetailsResponse, StateMessage } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
 
 interface InterruptData {
@@ -96,13 +96,22 @@ export default function HomePage() {
     traceEvents,
     slotDetails,
     contextWindowData,
+    stateMessages,          // 新增
     addMessage,
     addTraceEvent,
     setContextWindowData,
     setSlotDetails,
+    setStateMessages,       // 新增
+    incrementTurn,          // 新增
     setLoading,
     setError,
   } = useSession();
+
+  const [turnStatuses, setTurnStatuses] = useState<Record<string, 'done' | 'error'>>({});
+
+  const setTurnStatus = (turnId: string, status: 'done' | 'error') => {
+    setTurnStatuses(prev => ({ ...prev, [turnId]: status }));
+  };
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [currentInterrupt, setCurrentInterrupt] = useState<InterruptData | null>(null);
@@ -119,7 +128,7 @@ export default function HomePage() {
 
   const handleSendMessage = async (message: string) => {
     addMessage({ role: 'user', content: message });
-
+    incrementTurn(); // 新增：生成新 turnId
     setLoading(true);
     setError(null);
 
@@ -216,14 +225,37 @@ export default function HomePage() {
           sseManager.disconnect();
         });
 
-        sseManager.on('done', () => {
+        sseManager.on('done', ({ data }) => {
           clearLoadTimeout();
+
+          // 解析后端 state["messages"]
+          const payload = data as { messages?: StateMessage[]; answer?: string };
+          if (payload.messages && payload.messages.length > 0) {
+            const { messages: frontendMsgs } = useSession.getState();
+            // 后端消息数 >= 前端消息数时替换（后端数据更完整）
+            if (payload.messages.length >= frontendMsgs.length) {
+              setStateMessages(payload.messages);
+            }
+          }
+
+          // 记录 Turn 完成状态（供 ExecutionTracePanel badge 使用）
+          const turnId = useSession.getState().currentTurnId;
+          if (turnId) {
+            setTurnStatus(turnId, 'done');
+          }
+
           setLoading(false);
           sseManager.disconnect();
         });
 
         sseManager.on('error', ({ data }) => {
           const { message } = data as { message: string };
+
+          // 记录 Turn 失败状态
+          const turnId = useSession.getState().currentTurnId;
+          if (turnId) {
+            setTurnStatus(turnId, 'error');
+          }
 
           clearLoadTimeout();
           setError(message);
@@ -339,7 +371,12 @@ export default function HomePage() {
 
       <div className="flex flex-1 overflow-hidden">
         <section className="flex flex-1 flex-col bg-bg-base">
-          <MessageList messages={messages} isLoading={isLoading} />
+          <MessageList
+            messages={messages}
+            isLoading={isLoading}
+            stateMessages={stateMessages}
+            compressionEvents={contextWindowData.compressionEvents}
+          />
           <ChatInput onSend={handleSendMessage} disabled={isLoading} />
         </section>
 
@@ -390,16 +427,15 @@ export default function HomePage() {
               className="h-full"
             >
               {activeTab === 'chain' && (
-                <ExecutionTracePanel traceEvents={traceEvents} />
+                <ExecutionTracePanel traceEvents={traceEvents} turnStatuses={turnStatuses} />
               )}
-              {activeTab === 'context' &&
-                (contextWindowData ? (
-                  <ContextWindowPanel data={contextWindowData} slotDetails={slotDetails} />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-text-muted">
-                    暂无 Context 数据，请先发起一次请求
-                  </div>
-                ))}
+              {activeTab === 'context' && (
+                <ContextWindowPanel
+                  data={contextWindowData}
+                  slotDetails={slotDetails}
+                  stateMessages={stateMessages}
+                />
+              )}
             </motion.div>
           </div>
         </aside>

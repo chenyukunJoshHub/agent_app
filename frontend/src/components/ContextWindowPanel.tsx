@@ -13,6 +13,8 @@ interface ContextWindowPanelProps {
   data: ContextWindowData;
   /** Slot details (optional) */
   slotDetails?: SlotDetail[];
+  /** Backend state messages (optional) */
+  stateMessages?: import('@/types/context-window').StateMessage[];
 }
 
 /**
@@ -26,7 +28,7 @@ interface ContextWindowPanelProps {
  *
  * Based on Prompt v20 §1.2 十大子模块与 Context Window 分区
  */
-export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProps) {
+export function ContextWindowPanel({ data, slotDetails, stateMessages }: ContextWindowPanelProps) {
   const { budget, slotUsage, compressionEvents } = data;
 
   // Calculate overall usage
@@ -273,7 +275,7 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
         </div>
 
         {/* Slot Budget Breakdown */}
-        <div className="border-b border-border p-4 bg-bg-card">
+        <div className="border-b border-border p-4 bg-bg-card" data-testid="slot-breakdown">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-text-secondary" />
@@ -284,7 +286,30 @@ export function ContextWindowPanel({ data, slotDetails }: ContextWindowPanelProp
 
           <div className="space-y-2">
             {slotUsage.map((slot) => (
-              <SlotBar key={slot.name} slot={slot} />
+              <div key={slot.name}>
+                <div
+                  className="flex items-center justify-between text-sm"
+                  data-testid={`context-row-${slot.name}`}
+                >
+                  <SlotBar slot={slot} />
+                </div>
+                {/* Slot ⑧ (history) 展开预览 */}
+                {slot.name === 'history' && stateMessages && stateMessages.length > 0 && (
+                  <details className="mt-1 ml-14">
+                    <summary className="text-xs text-text-muted cursor-pointer">
+                      展开 {stateMessages.length} 条消息
+                    </summary>
+                    <div className="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
+                      {stateMessages.map((msg, i) => (
+                        <div key={i} className="text-[11px] text-text-secondary">
+                          <span className="font-mono text-text-muted mr-1">[{msg.role}]</span>
+                          {(msg.content || '').slice(0, 80)}{(msg.content || '').length > 80 ? '...' : ''}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
             ))}
           </div>
         </div>
