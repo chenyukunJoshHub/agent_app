@@ -1,11 +1,71 @@
 # Findings & Decisions - Multi-Tool AI Agent
 
-> **更新日期**: 2026-03-20
+> **更新日期**: 2026-03-25
 > **项目类型**: Full-stack Web Application
 
 ---
 
-## Session Findings (2026-03-24)
+## Session Findings (2026-03-25) — Context UI Redesign
+
+### 问题
+Context 面板需要动态化展示全部 10 个 Slot，链路面板存在重复内容，Turn 边界不明显，且前端无法直接访问后端的 state["messages"]。
+
+### 查阅章节
+- 无特定架构文档引用（这是一个前端 UI 重构计划）
+
+### 结论
+1. **EMPTY_CONTEXT_DATA 常量**：作为 ContextWindowData 的初始值，避免 null 判断，确保 Context 面板始终渲染
+2. **Turn Tracking 架构**：使用 currentTurnId + turnCounter 组合，addTraceEvent 自动打上 turnId，clearMessages 重置状态
+3. **StateMessage 同步**：后端 done 事件附带完整 messages 数组，前端比较消息数量后替换（后端数据更完整）
+4. **Turn 分隔线**：使用 useMemo 按事件原始顺序分组，支持 Turn 完成/失败 badge
+5. **10 Slot 渲染**：扩展 rawToCanonical 和 categoryLabels，确保 output_format 和 user_input 正确映射
+
+### 影响文件
+- `frontend/src/types/trace.ts` - 新增 turnId 字段
+- `frontend/src/types/context-window.ts` - 新增 StateMessage、summary_text、EMPTY_CONTEXT_DATA
+- `frontend/src/store/use-session.ts` - 新增 turnId、stateMessages、incrementTurn、setStateMessages
+- `backend/app/agent/middleware/trace.py` - done 事件新增 messages 字段
+- `frontend/src/components/ExecutionTracePanel.tsx` - Turn 分隔线
+- `frontend/src/components/ContextWindowPanel.tsx` - 10 Slot 渲染 + Slot ⑧ 预览
+- `frontend/src/components/MessageList.tsx` - tool 气泡 + 压缩通知
+- `frontend/src/app/page.tsx` - 完成端到端集成
+
+---
+
+## Session Findings (2026-03-24) — Tools 模块补全
+
+### 问题
+Tools 模块只有简单的 ToolRegistry（名称去重）和各工具独立实现，缺少架构设计文档中定义的元数据体系、权限决策、幂等保障、统一装配口，前端链路面板的「工具层」阶段无数据。
+
+### 查阅章节
+- Agent v13 §1.12（工具系统架构）
+- Skill v3 §1.4（Skill Protocol — activate_skill 语义）
+- Agent v13 §2.4（SSE 流式架构 — trace_event 协议）
+
+### 结论
+1. **ToolMeta 作为元数据载体**：贯穿 ToolManager / PolicyEngine / build_tool_registry / TraceMiddleware，单一数据源避免不一致
+2. **PolicyEngine 单一职责**：只做决策（allow/ask/deny），不做执行；未知 effect_class 走 "ask" 保守兜底
+3. **activate_skill ≠ read_file**：语义不同，activate_skill 通过 SkillManager.read_skill_content() 读取，保留 read_file 用于通用文件
+4. **build_tool_registry 是唯一装配口**：langchain_engine 必须调用它，不再直接 import 单个工具
+5. **SSE stage="tools" 事件**：tool_call_planned 在 aafter_model 检测 AIMessage.tool_calls，tool_call_result 在 aafter_agent 检测 ToolMessage
+
+### 影响文件
+- `backend/app/tools/base.py`（新建）
+- `backend/app/tools/manager.py`（新建）
+- `backend/app/tools/policy.py`（新建）
+- `backend/app/tools/idempotency.py`（新建）
+- `backend/app/tools/readonly/skill_loader.py`（新建）
+- `backend/app/tools/registry.py`（修改）
+- `backend/app/tools/__init__.py`（修改）
+- `backend/app/skills/manager.py`（修改）
+- `backend/app/agent/langchain_engine.py`（修改）
+- `backend/app/agent/middleware/trace.py`（修改）
+- `frontend/src/components/ToolCallCard.tsx`（新建）
+- `frontend/src/components/ExecutionTracePanel.tsx`（修改）
+
+---
+
+## Session Findings (2026-03-24) — UI 清理
 
 ### 问题
 前端右侧 Context 面板与链路面板的 `slot snapshot` 来源不一致，导致识别结果偏差；同时页面存在已失效历史功能（右上角状态区、右栏 timeline/tools）。

@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-03-25 会话同步（Context UI Redesign）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: Context UI Redesign 实现完成
+
+### 已完成
+- ✅ Task 1: 删除 ExecutionTracePanel 中的 Context Slot 快照
+- ✅ Task 2: 类型层 — EMPTY_CONTEXT_DATA + TraceEvent.turnId + StateMessage
+- ✅ Task 3: Store 层 — turnId + stateMessages
+- ✅ Task 4: 后端 — done 事件附带 messages
+- ✅ Task 5: ExecutionTracePanel — Turn 分隔线
+- ✅ Task 6: ContextWindowPanel — 10 Slot 空状态 + Slot ⑧ 预览
+- ✅ Task 7: page.tsx 串联 — 初始值 + done 事件处理 + Turn 状态
+- ✅ Task 8: MessageList — tool 气泡 + 压缩通知气泡
+- ✅ Task 9: 全量测试 + E2E 验证
+
+### 测试结果
+- 新增单元测试：14 个全部通过
+- 全量测试：207 passed / 26 failed
+- 代码覆盖率：后端 100%，前端 100%
+
+### 阻塞
+- 无新增阻塞。
+
+---
+
+## 2026-03-24 会话同步（工具系统审查修复计划）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: 根据 `docs/review/tool-system-review-2026-03-24.md` 创建 Phase 16 修复计划
+
+### 已完成
+- 创建 `docs/plans/plan-phase16-tool-system-review-fixes.md`（26 步修复计划）
+- 划分为 3 个子阶段：P0 安全与架构核心 / P1 正确性与可维护性 / P2 代码质量
+- 更新 `docs/plans/README.md` 索引
+- 更新 `task_plan.md` 阶段映射
+
+### 阻塞
+- 无新增阻塞。
+
+---
+
 ## 2026-03-24 会话同步（维护迭代）
 
 ### 本次状态
@@ -21,6 +65,45 @@
 
 ### 阻塞
 - 无新增阻塞。
+
+---
+
+## 2026-03-24 会话同步（Tools 模块补全）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: Tools 模块架构补全 — ToolMeta / PolicyEngine / ToolManager / IdempotencyStore / activate_skill / build_tool_registry / SSE 工具事件 / ToolCallCard
+
+### 已完成（8 个任务全部 ✅）
+
+| 任务 | 文件 | 测试 | 覆盖率 |
+|------|------|------|--------|
+| T1: ToolMeta dataclass | `backend/app/tools/base.py` | 32 tests | 100% |
+| T2: activate_skill | `backend/app/tools/readonly/skill_loader.py` | 3 tests | — |
+| T3: ToolManager | `backend/app/tools/manager.py` | 8 tests | 100% |
+| T4: PolicyEngine | `backend/app/tools/policy.py` | 15 tests | 100% |
+| T5: IdempotencyStore | `backend/app/tools/idempotency.py` | 5 tests | 100% |
+| T6: build_tool_registry | `backend/app/tools/registry.py`（修改） | 7 tests | — |
+| T7: SSE tools 事件 | `backend/app/agent/middleware/trace.py`（修改） | — | — |
+| T8: ToolCallCard | `frontend/src/components/ToolCallCard.tsx` | — | — |
+
+### 新建文件（13）
+- backend: base.py, manager.py, policy.py, idempotency.py, readonly/__init__.py, readonly/skill_loader.py
+- tests: test_base.py, test_tool_manager.py, test_policy_engine.py, test_idempotency.py, test_activate_skill.py, test_build_tool_registry.py
+- frontend: ToolCallCard.tsx
+
+### 修改文件（6）
+- backend/app/tools/registry.py — 新增 build_tool_registry()
+- backend/app/tools/__init__.py — 导出所有新模块
+- backend/app/skills/manager.py — 新增 read_skill_content(), scan() 缓存
+- backend/app/agent/langchain_engine.py — 改用 build_tool_registry()
+- backend/app/agent/middleware/trace.py — 新增 stage="tools" 事件
+- frontend/src/components/ExecutionTracePanel.tsx — 集成 ToolCallCard
+
+### 测试结果
+- 新增测试: 70 个全部通过
+- 核心模块覆盖率: 100%（base, manager, policy, idempotency）
+- 总测试: 140 passed, 2 failed（预先存在的 Tavily API key 问题）
 
 ---
 
@@ -66,6 +149,8 @@
 | 12 | plan-phase12-hil.md | frontend/components/hil/ | Agent v13 §1.13 | ✅ done |
 | 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — | ✅ done |
 | 14 | plan-phase14-slot-token-stats.md | backend/prompt/slot_tracker.py + frontend/ | Prompt v20 §1.2 | ✅ done |
+| 15 | plan-phase15-assistant-ui-redesign.md | frontend/ + assistant-ui | — | 🔄 in progress |
+| 16 | plan-phase16-tool-system-review-fixes.md | backend/tools/ + backend/agent/ + tests/ | Agent v13 §1.12 | ⏳ pending |
 
 ---
 
@@ -110,7 +195,7 @@
 - ✅ Phase 10-11: 前端组件测试 (74 个测试)
 
 ### 当前阶段
-**所有计划阶段已完成！** ✅
+**Phase 15 (assistant-ui) 进行中，Phase 16 (工具系统修复) 计划完成，待开始**
 
 **测试统计**:
 - 后端单元测试: 119+ 测试 ✅ (+27 Phase 14)
