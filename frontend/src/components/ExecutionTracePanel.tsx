@@ -2,15 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, ChevronDown, ChevronRight, Database, Layers } from 'lucide-react';
+import { Activity, ChevronDown, ChevronRight, Database } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type { TraceEvent } from '@/types/trace';
-import type { SlotDetail } from '@/types/context-window';
+import { ToolCallCard } from '@/components/ToolCallCard';
 
 interface ExecutionTracePanelProps {
   traceEvents: TraceEvent[];
-  slotDetails: SlotDetail[];
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -49,9 +48,8 @@ function prettyJson(data: unknown): string {
   }
 }
 
-export function ExecutionTracePanel({ traceEvents, slotDetails }: ExecutionTracePanelProps) {
+export function ExecutionTracePanel({ traceEvents }: ExecutionTracePanelProps) {
   const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
-  const [openSlots, setOpenSlots] = useState<Record<string, boolean>>({});
 
   const stageCount = useMemo(() => {
     const counter: Record<string, number> = {};
@@ -63,10 +61,6 @@ export function ExecutionTracePanel({ traceEvents, slotDetails }: ExecutionTrace
 
   const toggle = (id: string) => {
     setOpenIds((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const toggleSlot = (id: string) => {
-    setOpenSlots((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -81,50 +75,7 @@ export function ExecutionTracePanel({ traceEvents, slotDetails }: ExecutionTrace
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {slotDetails.length > 0 && (
-          <section className="rounded-xl border border-border bg-bg-card">
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-              <Layers className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium text-text-primary">
-                Context Slot 内容快照
-              </span>
-            </div>
-            <div className="divide-y divide-border">
-              {slotDetails
-                .filter((s) => s.enabled)
-                .sort((a, b) => b.tokens - a.tokens)
-                .map((slot) => {
-                  const key = `slot_${slot.name}`;
-                  const expanded = !!openSlots[key];
-                  return (
-                    <div key={key} className="px-3 py-2">
-                      <button
-                        className="w-full text-left flex items-center justify-between"
-                        onClick={() => toggleSlot(key)}
-                      >
-                        <div className="flex items-center gap-2">
-                          {expanded ? (
-                            <ChevronDown className="w-3 h-3 text-text-muted" />
-                          ) : (
-                            <ChevronRight className="w-3 h-3 text-text-muted" />
-                          )}
-                          <span className="text-sm text-text-primary">{slot.display_name}</span>
-                        </div>
-                        <span className="text-xs text-text-muted">{slot.tokens} tokens</span>
-                      </button>
-                      {expanded && (
-                        <pre className="mt-2 max-h-52 overflow-auto rounded-lg bg-bg-muted p-2 text-xs text-text-secondary">
-                          {slot.content}
-                        </pre>
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          </section>
-        )}
-
+      <div className="flex-1 overflow-y-auto p-4">
         <section className="rounded-xl border border-border bg-bg-card">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <Database className="w-4 h-4 text-primary" />
@@ -138,6 +89,21 @@ export function ExecutionTracePanel({ traceEvents, slotDetails }: ExecutionTrace
           ) : (
             <div className="divide-y divide-border">
               {traceEvents.map((evt, idx) => {
+                if (evt.stage === 'tools') {
+                  return (
+                    <ToolCallCard
+                      key={evt.id}
+                      toolName={String(evt.payload.tool_name ?? evt.step)}
+                      status={evt.status as 'start' | 'ok' | 'error' | 'skip'}
+                      args={evt.payload.args as Record<string, unknown> | undefined}
+                      contentPreview={evt.payload.content_preview as string | undefined}
+                      contentLength={evt.payload.content_length as number | undefined}
+                      errorMessage={evt.payload.error as string | undefined}
+                      timestamp={evt.timestamp}
+                    />
+                  );
+                }
+
                 const expanded = !!openIds[evt.id];
                 return (
                   <motion.div

@@ -119,10 +119,6 @@ export default function HomePage() {
 
   const handleSendMessage = async (message: string) => {
     addMessage({ role: 'user', content: message });
-    addMessage({
-      role: 'assistant',
-      content: '',
-    });
 
     setLoading(true);
     setError(null);
@@ -170,11 +166,17 @@ export default function HomePage() {
 
           const sessionState = useSession.getState();
           const lastMsg = sessionState.messages[sessionState.messages.length - 1];
+
           if (lastMsg && lastMsg.role === 'assistant') {
             const text = lastMsg.content ? `${lastMsg.content}\n${content}` : content;
             const updatedMsg = { ...lastMsg, content: text };
             useSession.setState({
               messages: [...sessionState.messages.slice(0, -1), updatedMsg],
+            });
+          } else {
+            addMessage({
+              role: 'assistant',
+              content,
             });
           }
         });
@@ -388,7 +390,7 @@ export default function HomePage() {
               className="h-full"
             >
               {activeTab === 'chain' && (
-                <ExecutionTracePanel traceEvents={traceEvents} slotDetails={slotDetails} />
+                <ExecutionTracePanel traceEvents={traceEvents} />
               )}
               {activeTab === 'context' &&
                 (contextWindowData ? (
