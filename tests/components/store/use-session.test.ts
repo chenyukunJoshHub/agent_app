@@ -256,4 +256,56 @@ describe("useSession", () => {
       expect(useSession.getState().messages).toHaveLength(1);
     });
   });
+
+  describe("Turn tracking", () => {
+    it("初始 turnCounter 为 0，currentTurnId 为 null", () => {
+      const state = useSession.getState();
+      expect(state.turnCounter).toBe(0);
+      expect(state.currentTurnId).toBeNull();
+    });
+
+    it("incrementTurn 后 turnCounter+1，currentTurnId 更新", () => {
+      useSession.getState().incrementTurn();
+      const state = useSession.getState();
+      expect(state.turnCounter).toBe(1);
+      expect(state.currentTurnId).toBe('turn_1');
+    });
+
+    it("clearMessages 重置 turnCounter 和 currentTurnId", () => {
+      useSession.getState().incrementTurn();
+      useSession.getState().clearMessages();
+      const state = useSession.getState();
+      expect(state.turnCounter).toBe(0);
+      expect(state.currentTurnId).toBeNull();
+    });
+
+    it("addTraceEvent 自动打上 currentTurnId", () => {
+      useSession.getState().incrementTurn();
+      useSession.getState().addTraceEvent({
+        id: 'e1', timestamp: new Date().toISOString(),
+        stage: 'react', step: 'start', status: 'start', payload: {},
+      });
+      const { traceEvents } = useSession.getState();
+      expect(traceEvents[0].turnId).toBe('turn_1');
+    });
+  });
+
+  describe("stateMessages", () => {
+    it("初始 stateMessages 为空数组", () => {
+      expect(useSession.getState().stateMessages).toEqual([]);
+    });
+
+    it("setStateMessages 更新 stateMessages", () => {
+      useSession.getState().setStateMessages([
+        { role: 'user', content: 'hello' },
+      ]);
+      expect(useSession.getState().stateMessages).toHaveLength(1);
+    });
+
+    it("clearMessages 重置 stateMessages", () => {
+      useSession.getState().setStateMessages([{ role: 'user', content: 'hi' }]);
+      useSession.getState().clearMessages();
+      expect(useSession.getState().stateMessages).toEqual([]);
+    });
+  });
 });

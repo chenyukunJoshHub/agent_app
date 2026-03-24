@@ -6,7 +6,8 @@
  */
 import { create } from 'zustand';
 
-import type { ContextWindowData } from '@/types/context-window';
+import type { ContextWindowData, StateMessage } from '@/types/context-window';
+import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
 
 export interface Message {
@@ -34,7 +35,7 @@ export interface SessionState {
   tokenBudget: number;
 
   // Context Window
-  contextWindowData: ContextWindowData | null;
+  contextWindowData: ContextWindowData;
   slotDetails: Array<{
     name: string;
     display_name: string;
@@ -42,6 +43,13 @@ export interface SessionState {
     tokens: number;
     enabled: boolean;
   }>;
+
+  // Turn tracking
+  currentTurnId: string | null;
+  turnCounter: number;
+
+  // Backend state messages
+  stateMessages: StateMessage[];
 
   // Detailed execution trace
   traceEvents: TraceEvent[];
@@ -58,7 +66,7 @@ export interface SessionState {
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   updateToolCall: (messageId: string, toolCallId: string, update: Partial<ToolCall>) => void;
   setTokenUsed: (used: number) => void;
-  setContextWindowData: (data: ContextWindowData | null) => void;
+  setContextWindowData: (data: ContextWindowData) => void;
   setSlotDetails: (
     slots: Array<{
       name: string;
@@ -68,6 +76,8 @@ export interface SessionState {
       enabled: boolean;
     }>
   ) => void;
+  incrementTurn: () => void;
+  setStateMessages: (msgs: StateMessage[]) => void;
   addTraceEvent: (event: TraceEvent) => void;
   clearTraceEvents: () => void;
   setLoading: (loading: boolean) => void;
@@ -81,8 +91,11 @@ export const useSession = create<SessionState>((set, _get) => ({
   messages: [],
   tokenUsed: 0,
   tokenBudget: 32000,
-  contextWindowData: null,
+  contextWindowData: EMPTY_CONTEXT_DATA,
   slotDetails: [],
+  currentTurnId: null,
+  turnCounter: 0,
+  stateMessages: [],
   traceEvents: [],
   sessionId: `session_${Date.now()}`,
   userId: 'dev_user',
@@ -123,10 +136,22 @@ export const useSession = create<SessionState>((set, _get) => ({
 
   setSlotDetails: (slots) => set({ slotDetails: slots }),
 
+  incrementTurn: () => {
+    set((state) => {
+      const turnCounter = state.turnCounter + 1;
+      return { turnCounter, currentTurnId: `turn_${turnCounter}` };
+    });
+  },
+
+  setStateMessages: (msgs) => set({ stateMessages: msgs }),
+
   addTraceEvent: (event) => {
     set((state) => ({
       // keep only latest 500 to avoid unbounded growth
-      traceEvents: [...state.traceEvents, event].slice(-500),
+      traceEvents: [
+        ...state.traceEvents,
+        { ...event, turnId: state.currentTurnId ?? undefined },
+      ].slice(-500),
     }));
   },
 
@@ -141,9 +166,12 @@ export const useSession = create<SessionState>((set, _get) => ({
   clearMessages: () =>
     set({
       messages: [],
+      stateMessages: [],
       traceEvents: [],
       tokenUsed: 0,
-      contextWindowData: null,
+      contextWindowData: EMPTY_CONTEXT_DATA,
       slotDetails: [],
+      currentTurnId: null,
+      turnCounter: 0,
     }),
 }));
