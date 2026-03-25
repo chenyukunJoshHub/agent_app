@@ -176,4 +176,21 @@ describe('CompressionLog', () => {
       expect(timestamps[0]).toBeInTheDocument();
     });
   });
+
+  describe('hideInternalHeader prop', () => {
+    it('hideInternalHeader=false 时应显示内部 header', () => {
+      render(<CompressionLog events={[]} hideInternalHeader={false} />);
+      expect(screen.getByText('压缩事件日志')).toBeInTheDocument();
+    });
+
+    it('hideInternalHeader=true 时应隐藏内部 header', () => {
+      render(<CompressionLog events={[]} hideInternalHeader={true} />);
+      expect(screen.queryByText('压缩事件日志')).not.toBeInTheDocument();
+    });
+
+    it('未传 hideInternalHeader 时默认显示内部 header', () => {
+      render(<CompressionLog events={[]} />);
+      expect(screen.getByText('压缩事件日志')).toBeInTheDocument();
+    });
+  });
 });

@@ -8,6 +8,8 @@ import type { CompressionEvent } from '@/types/context-window';
 interface CompressionLogProps {
   /** Compression events to display */
   events: CompressionEvent[];
+  /** 隐藏组件内部 header，由 ContextPanel 模块四提供外部 header 时使用 */
+  hideInternalHeader?: boolean;
 }
 
 /**
@@ -20,7 +22,7 @@ interface CompressionLogProps {
  * - Affected slots
  * - Timestamp
  */
-export function CompressionLog({ events }: CompressionLogProps) {
+export function CompressionLog({ events, hideInternalHeader = false }: CompressionLogProps) {
   const formatTimestamp = (timestamp: number) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString('zh-CN', {
@@ -53,15 +55,15 @@ export function CompressionLog({ events }: CompressionLogProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-border p-4 bg-background-alt">
-        <div className="flex items-center gap-2">
-          <Minimize2 className="w-5 h-5 text-text-secondary" />
-          <h2 className="font-semibold text-text-primary">压缩事件日志</h2>
+      {!hideInternalHeader && (
+        <div className="border-b border-border p-4 bg-background-alt">
+          <div className="flex items-center gap-2">
+            <Minimize2 className="w-5 h-5 text-text-secondary" />
+            <h2 className="font-semibold text-text-primary">压缩事件日志</h2>
+          </div>
+          <p className="mt-1 text-xs text-text-muted">{events.length} 个压缩事件</p>
         </div>
-        <p className="mt-1 text-xs text-text-muted">
-          {events.length} 个压缩事件
-        </p>
-      </div>
+      )}
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto p-4">
@@ -91,8 +93,8 @@ export function CompressionLog({ events }: CompressionLogProps) {
                     exit={{ opacity: 0, x: -100 }}
                     transition={{ duration: 0.3, delay: index * 0.05 }}
                     className={cn(
-                      "rounded-lg border border-border bg-bg-card p-3 shadow-sm",
-                      "transition-all duration-200 hover:shadow-md hover:border-border-strong"
+                      'rounded-lg border border-border bg-bg-card p-3 shadow-sm',
+                      'transition-all duration-200 hover:shadow-md hover:border-border-strong'
                     )}
                     data-testid="compression-event"
                     data-event-id={event.id}
