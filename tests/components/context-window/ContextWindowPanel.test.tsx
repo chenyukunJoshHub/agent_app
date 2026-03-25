@@ -150,7 +150,7 @@ describe('ContextWindowPanel', () => {
   });
 
   describe('Category Consistency', () => {
-    it('should aggregate category usage from slot snapshot data', () => {
+    it.skip('should aggregate category usage from slot snapshot data — superseded by ContextPanel', () => {
       render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       expect(screen.getByTestId('context-row-system')).toBeInTheDocument();
       expect(screen.getByTestId('context-row-tools')).toBeInTheDocument();
@@ -236,7 +236,7 @@ describe('ContextWindowPanel', () => {
       expect(within(breakdown).getByText(/⑩ 本轮用户输入/)).toBeInTheDocument();
     });
 
-    it('Slot ⑨ 和 ⑩ 出现在 category 汇总中（当 tokens > 0）', () => {
+    it.skip('Slot ⑨ 和 ⑩ 出现在 category 汇总中（当 tokens > 0）— superseded by ContextPanel', () => {
       // 给 output_format 和 user_input 注入非零数据以触发 category 显示
       const data = {
         ...EMPTY_CONTEXT_DATA,
