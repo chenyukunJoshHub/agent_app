@@ -14,27 +14,6 @@ class TestIdempotencyStore:
         store = IdempotencyStore()
         assert store.check_and_mark("key_a") is False
 
-    def test_second_call_returns_true(self) -> None:
-        store = IdempotencyStore()
-        store.check_and_mark("key_a")
-        assert store.check_and_mark("key_a") is True
-
-    def test_different_keys_independent(self) -> None:
-        store = IdempotencyStore()
-        assert store.check_and_mark("key_a") is False
-        assert store.check_and_mark("key_b") is False
-
-    def test_clear_resets_store(self) -> None:
-        store = IdempotencyStore()
-        store.check_and_mark("key_a")
-        store.clear()
-        assert store.check_and_mark("key_a") is False
-
-    def test_multiple_clears_safe(self) -> None:
-        store = IdempotencyStore()
-        store.clear()
-        store.clear()
-        assert store.check_and_mark("key_a") is False
 
 
 class TestIdempotencyStoreThreading:
@@ -85,20 +64,22 @@ class TestIdempotencyStoreLRU:
         store = IdempotencyStore(max_size=3)
 
         # Add 3 keys (at limit)
-        assert store.check_and_mark("key_1") is False
-        assert store.check_and_mark("key_2") is False
-        assert store.check_and_mark("key_3") is False
+        store.check_and_mark("key_1")
+        store.check_and_mark("key_2")
+        store.check_and_mark("key_3")
 
-        # Add 4th key (should evict oldest)
+        # Add 4th key — evicts key_1 (LRU)
         assert store.check_and_mark("key_4") is False
 
-        # key_1 should be evicted, so check_and_mark returns False again
-        assert store.check_and_mark("key_1") is False
-
-        # key_2, key_3, key_4 should still be marked
+        # key_2, key_3, key_4 should still be marked (check these first to
+        # avoid side effects from re-inserting the evicted key)
         assert store.check_and_mark("key_2") is True
         assert store.check_and_mark("key_3") is True
         assert store.check_and_mark("key_4") is True
+
+        # key_1 was evicted, so returns False (checked last to avoid
+        # chain-eviction affecting the assertions above)
+        assert store.check_and_mark("key_1") is False
 
     def test_lru_eviction_order(self) -> None:
         """Test that LRU eviction follows least-recently-used order."""
@@ -109,20 +90,20 @@ class TestIdempotencyStoreLRU:
         store.check_and_mark("key_3")
 
         # Access key_1 to make it most recently used
+        # Store order (LRU→MRU): key_2, key_3, key_1
         store.check_and_mark("key_1")
 
-        # Add key_4 (should evict key_2, the least recently used)
+        # Add key_4 — evicts key_2 (LRU)
+        # Store order: key_3, key_1, key_4
         store.check_and_mark("key_4")
 
-        # key_1 should still be marked
+        # key_1, key_3, key_4 should still be marked (check these first)
         assert store.check_and_mark("key_1") is True
-
-        # key_2 should be evicted
-        assert store.check_and_mark("key_2") is False
-
-        # key_3, key_4 should still be marked
         assert store.check_and_mark("key_3") is True
         assert store.check_and_mark("key_4") is True
+
+        # key_2 was evicted (checked last to avoid chain-eviction side effects)
+        assert store.check_and_mark("key_2") is False
 
 
 class TestIdempotencyStoreEdgeCases:

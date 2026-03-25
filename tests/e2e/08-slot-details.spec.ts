@@ -29,9 +29,9 @@ test.describe('Slot Details E2E', () => {
 
   test('shows overall progress and statistics', async ({ page }) => {
     await expect(page.getByTestId('overall-progress-fill')).toBeVisible();
-    await expect(page.getByTestId('stat-input-budget')).toBeVisible();
-    await expect(page.getByTestId('stat-output-reserve')).toBeVisible();
-    await expect(page.getByTestId('stat-total-used')).toBeVisible();
+    await expect(page.getByTestId('context-row-autocompact-buffer')).toBeVisible();
+    await expect(page.getByTestId('stat-reserved-buffer')).toBeVisible();
+    await expect(page.getByTestId('stat-free-space')).toBeVisible();
   });
 });
 

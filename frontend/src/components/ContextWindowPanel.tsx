@@ -35,14 +35,14 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
   const totalUsed = budget.usage.total_used;
   const totalBudget = budget.working_budget;
   const usagePercentage = totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0;
-  
+
   // Calculate reserved buffer (预留)
   const reservedBuffer =
     budget.usage.autocompact_buffer ?? Math.max(0, Math.floor(totalBudget * 0.165));
-  
+
   // Calculate actual savings from compression events (实际节省)
   const actualSavings = compressionEvents.reduce((sum, event) => sum + event.tokens_saved, 0);
-  
+
   const freeSpace = Math.max(0, totalBudget - totalUsed - reservedBuffer);
 
   // Format numbers
@@ -92,8 +92,8 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
     procedural: 'procedural',
     tools: 'tools',
     history: 'history',
-    output_format: 'output_format',   // 改：原来映射到 'system'
-    user_input: 'user_input',         // 改：原来映射到 'history'
+    output_format: 'output_format', // 改：原来映射到 'system'
+    user_input: 'user_input', // 改：原来映射到 'history'
   };
 
   const categoryLabels: Record<string, string> = {
@@ -164,7 +164,9 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
         <div className="border-b border-border p-4 bg-bg-card">
           <div className="mb-3 flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-text-secondary" />
-            <span className="text-sm font-medium text-text-primary">Estimated usage by category</span>
+            <span className="text-sm font-medium text-text-primary">
+              Estimated usage by category
+            </span>
           </div>
           <div className="space-y-2">
             {categoryUsage.map((item) => {
@@ -188,7 +190,8 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             >
               <span className="text-text-secondary">Free space</span>
               <span className="text-text-primary tabular-nums">
-                {formatNumber(freeSpace)} ({(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
+                {formatNumber(freeSpace)} (
+                {(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
               </span>
             </div>
             <div
@@ -197,7 +200,8 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             >
               <span className="text-text-secondary">预留 Buffer</span>
               <span className="text-text-primary tabular-nums">
-                {formatNumber(reservedBuffer)} ({(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
+                {formatNumber(reservedBuffer)} (
+                {(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
               </span>
             </div>
             {actualSavings > 0 && (
@@ -207,7 +211,8 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
               >
                 <span className="text-text-secondary">实际节省</span>
                 <span className="text-text-primary tabular-nums text-success-text">
-                  -{formatNumber(actualSavings)} ({(totalBudget > 0 ? (actualSavings / totalBudget) * 100 : 0).toFixed(1)}%)
+                  -{formatNumber(actualSavings)} (
+                  {(totalBudget > 0 ? (actualSavings / totalBudget) * 100 : 0).toFixed(1)}%)
                 </span>
               </div>
             )}
@@ -243,33 +248,29 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             </motion.div>
           </div>
 
+          <div>
             {/* Percentage and remaining */}
             <div className="mt-2 flex items-center justify-between text-xs">
-              <span className="text-text-muted">
+              <span className="text-text-muted" data-testid="overall-percentage">
                 {usagePercentage.toFixed(1)}% 已使用
               </span>
-              <span className="text-xs text-text-muted">
+              <span className="text-xs text-text-muted" data-testid="overall-remaining">
                 {formatNumber(budget.usage.total_remaining)} 剩余
               </span>
             </div>
 
             {/* Reserved Buffer */}
-            <div
-              className="flex items-center justify-between text-sm border-t border-border pt-2"
-              data-testid="context-row-reserved-buffer"
-            >
+            <div className="flex items-center justify-between text-sm border-t border-border pt-2">
               <span className="text-text-secondary">预留 Buffer</span>
               <span className="text-xs text-text-primary tabular-nums">
-                {formatNumber(reservedBuffer)} ({totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%
+                {formatNumber(reservedBuffer)} (
+                {(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
               </span>
             </div>
 
             {/* Actual Savings */}
             {actualSavings > 0 && (
-              <div
-                className="flex items-center justify-between text-sm"
-                data-testid="context-row-actual-savings"
-              >
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-text-secondary">实际节省</span>
                 <span className="text-xs text-primary tabular-nums text-success-text">
                   -{formatNumber(actualSavings)} ({compressionEvents.length} 次事件)
@@ -278,13 +279,11 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             )}
 
             {/* Free Space */}
-            <div
-              className="flex items-center justify-between text-sm border-t border-border pt-2"
-              data-testid="context-row-free-space"
-            >
+            <div className="flex items-center justify-between text-sm border-t border-border pt-2">
               <span className="text-text-secondary">Free space</span>
               <span className="text-xs text-primary tabular-nums">
-                {formatNumber(freeSpace)} ({totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%
+                {formatNumber(freeSpace)} (
+                {(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
               </span>
             </div>
           </div>
@@ -306,7 +305,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
         </div>
 
         {/* Slot Budget Breakdown */}
-        <div className="border-b border-border p-4 bg-bg-card" data-testid="slot-breakdown">
+        <div className="border-b border-border p-4 bg-bg-card" data-testid="slot-budget-breakdown">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-text-secondary" />
@@ -334,7 +333,8 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
                       {stateMessages.map((msg, i) => (
                         <div key={i} className="text-[11px] text-text-secondary">
                           <span className="font-mono text-text-muted mr-1">[{msg.role}]</span>
-                          {(msg.content || '').slice(0, 80)}{(msg.content || '').length > 80 ? '...' : ''}
+                          {(msg.content || '').slice(0, 80)}
+                          {(msg.content || '').length > 80 ? '...' : ''}
                         </div>
                       ))}
                     </div>
@@ -346,59 +346,58 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
         </div>
 
         {/* Statistics Row */}
-          <div className="border-b border-border p-4 bg-bg-card">
-            <div className="mb-3 flex items-center justify-between">
-              <BarChart3 className="w-4 h-4 text-text-secondary" />
-              <span className="text-sm font-medium text-text-primary">统计数据</span>
+        <div className="border-b border-border p-4 bg-bg-card">
+          <div className="mb-3 flex items-center justify-between">
+            <BarChart3 className="w-4 h-4 text-text-secondary" />
+            <span className="text-sm font-medium text-text-primary">统计数据</span>
+          </div>
+          <div className="space-y-2">
+            {/* Reserved Buffer */}
+            <div
+              className="flex items-center justify-between text-sm"
+              data-testid="context-row-autocompact-buffer"
+            >
+              <span className="text-text-secondary">Autocompact buffer</span>
+              <span className="text-xs text-text-muted">
+                {formatNumber(budget.usage.autocompact_buffer ?? 0)}
+              </span>
             </div>
-            <div className="space-y-2">
-              {/* Reserved Buffer */}
+
+            {/* Reserved Buffer */}
+            <div
+              className="flex items-center justify-between text-sm"
+              data-testid="stat-reserved-buffer"
+            >
+              <span className="text-text-secondary">预留 Buffer</span>
+              <span className="text-xs text-text-muted">{formatNumber(reservedBuffer)}</span>
+            </div>
+
+            {/* Actual Savings */}
+            {actualSavings > 0 && (
               <div
                 className="flex items-center justify-between text-sm"
-                data-testid="context-row-autocompact-buffer"
+                data-testid="stat-actual-savings"
               >
-                <span className="text-text-secondary">Autocompact buffer</span>
+                <span className="text-text-secondary">实际节省</span>
                 <span className="text-xs text-text-muted">
-                  {formatNumber(budget.usage.autocompact_buffer ?? 0)}
+                  {formatNumber(actualSavings)} tokens ({compressionEvents.length} 次事件)
                 </span>
               </div>
+            )}
 
-              {/* Reserved Buffer (original test name) */}
-              <div
-                className="flex items-center justify-between text-sm"
-                data-testid="context-row-reserved-buffer"
-              >
-                <span className="text-text-secondary">预留 Buffer</span>
-                <span className="text-xs text-text-muted">
-                  {formatNumber(Math.floor(totalBudget * 0.165))}
-                </span>
-              </div>
-
-              {/* Actual Savings */}
-              {actualSavings > 0 && (
-                <div
-                  className="flex items-center justify-between text-sm"
-                  data-testid="context-row-actual-savings"
-                >
-                  <span className="text-text-secondary">实际节省</span>
-                  <span className="text-xs text-text-muted">
-                    {formatNumber(actualSavings)} tokens ({compressionEvents.length} 次事件)
-                  </span>
-                </div>
-              )}
-
-              {/* Free Space */}
-              <div
-                className="flex items-center justify-between text-sm"
-                data-testid="context-row-free-space"
-              >
-                <span className="text-text-secondary">Free space</span>
-                <span className="text-xs text-text-muted">
-                  {formatNumber(freeSpace)} tokens ({((freeSpace / totalBudget) * 100).toFixed(1)}%)
-                </span>
-              </div>
+            {/* Free Space */}
+            <div
+              className="flex items-center justify-between text-sm"
+              data-testid="stat-free-space"
+            >
+              <span className="text-text-secondary">Free space</span>
+              <span className="text-xs text-text-muted">
+                {formatNumber(freeSpace)} tokens (
+                {(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
+              </span>
             </div>
           </div>
+        </div>
 
         {/* Compression Log */}
         <div className="bg-bg-card">

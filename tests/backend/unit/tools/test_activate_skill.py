@@ -47,14 +47,14 @@ class TestActivateSkillExisting:
         assert "Test Skill Content" in result
         assert "Instructions" in result
 
-    def test_scans_skills(self, monkeypatch_skill_manager):
+    def test_scans_skills(self, monkeypatch_skill_manager, mock_skill_manager):
         """Test that activate_skill calls scan()."""
         from app.tools.readonly.skill_loader import activate_skill
 
         activate_skill.invoke({"name": "test-skill"})
-        # Verify scan was called
-        from app.skills.manager import SkillManager
-        SkillManager.get_instance().scan.assert_called_once()
+        # Assert directly on the mock instance — avoids re-calling get_instance()
+        # which would make the call count ambiguous
+        mock_skill_manager.scan.assert_called_once()
 
 
 class TestActivateSkillMissing:

@@ -119,10 +119,9 @@ describe('ContextWindowPanel', () => {
 
     it('should render statistics row', async () => {
       render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
-      expect(screen.getByTestId('stat-input-budget')).toBeInTheDocument();
-      expect(screen.getByTestId('stat-output-reserve')).toBeInTheDocument();
-      expect(screen.getByTestId('stat-total-used')).toBeInTheDocument();
-      expect(screen.getByTestId('stat-compression-count')).toBeInTheDocument();
+      expect(screen.getByTestId('context-row-autocompact-buffer')).toBeInTheDocument();
+      expect(screen.getByTestId('stat-reserved-buffer')).toBeInTheDocument();
+      expect(screen.getByTestId('stat-free-space')).toBeInTheDocument();
     });
 
     it('should render compression log section', () => {
@@ -136,12 +135,12 @@ describe('ContextWindowPanel', () => {
     it('should display correct usage percentage', () => {
       render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
       // 5000 / 32768 * 100 = 15.26%
-      expect(screen.getByTestId('overall-percentage')).toHaveTextContent(/15.3%/);
+      expect(screen.getByTestId('overall-percentage')).toHaveTextContent(/15\.3%/);
     });
 
     it('should display correct remaining tokens', () => {
       render(<ContextWindowPanel data={mockData} slotDetails={mockSlotDetails} />);
-      expect(screen.getByTestId('overall-remaining')).toHaveTextContent(/27.8k/);
+      expect(screen.getByTestId('overall-remaining')).toHaveTextContent(/27\.8k/);
     });
 
     it('should show "正常" status when usage < 70%', () => {
