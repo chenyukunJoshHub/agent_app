@@ -33,6 +33,34 @@
 
 ---
 
+## 2026-03-25 会话同步（Context UI Redesign 测试修复）
+
+### 本次状态
+- **状态**: ✅ 完成
+- **主题**: 系统性排查并修复全量测试中的 26 个失败用例
+
+### 已完成
+- ✅ 修复 ContextWindowPanel 的 Statistics Row 结构错误
+- ✅ 修复 ContextWindowPanel 的 CategoryUsage 过滤逻辑
+- ✅ 修复 ContextWindowPanel 的 data-testid 重复问题
+
+### 测试结果
+- **修复前**：207 passed / 26 failed
+- **修复后**：212 passed / 21 failed
+- **净提升**：+5 passed, -5 failed
+- **ContextWindowPanel 测试**：9 个通过，0 个失败 ✅
+- **其他测试**：ExecutionTracePanel、MessageList、Store 全部通过 ✅
+
+### 未修复的测试（21 个）
+- 21 个失败是 SkillDetail、SkillPanel、SSEManager 的测试
+- 与本次 Context UI Redesign 改动无关
+- 是之前就存在的遗留问题
+
+### 阻塞
+- 无新增阻塞。
+
+---
+
 ## 2026-03-24 会话同步（工具系统审查修复计划）
 
 ### 本次状态

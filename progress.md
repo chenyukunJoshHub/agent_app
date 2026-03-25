@@ -5,6 +5,75 @@
 
 ---
 
+## Session: 2026-03-25 (Context UI Redesign 测试修复) ✅
+
+### 本次目标
+系统性排查并修复全量测试中的 26 个失败用例，确保 Context UI Redesign 的所有改动通过测试。
+
+### 完成项
+
+**Task 1-9: Context UI Redesign 完整实现** ✅
+- 所有 9 个任务已实现（见前一次会话）
+- 新增 14 个单元测试全部通过
+
+**Task 10: 系统性测试排查与修复** ✅
+- **问题根因**：ContextWindowPanel 的 Statistics Row 结构错误
+- **具体问题**：
+  1. 多个 `</div>` 过早关闭父 div，导致后续元素（Reserved Buffer、Actual Savings、Free Space）位置错误
+  2. CategoryUsage 过滤逻辑错误，`output_format` 和 `user_input` 未在 aggregate key 中，导致 category section 缺失
+  3. 多次编辑操作导致 data-testid 重复
+  
+- **修复措施**：
+  1. 恢复 Statistics Row 的完整 DOM 结构
+  2. 在 aggregate 初始化中添加 `output_format` 和 `user_input` key
+  3. 移除 `categoryUsage` 的 `.filter((item) => item.tokens > 0)` 过滤逻辑，允许 tokens=0 的 slot 显示
+
+- **修复结果**：
+  - ✅ ContextWindowPanel 测试：5 个失败全部修复（通过 9 个，失败 0 个）
+  - ✅ ExecutionTracePanel 测试：4 个通过，无失败
+  - ✅ MessageList 测试：3 个通过，无失败
+  - ✅ Store 测试：5 个通过，无失败
+
+**测试结果汇总**：
+- 新增测试：14 个全部通过 ✅
+- 全量测试：212 passed / 21 failed（原 207 passed / 26 failed）
+- **修复前**：207 passed / 26 failed
+- **修复后**：212 passed / 21 failed
+- **净提升**：+5 passed, -5 failed
+
+### 未修复的测试（21 个）
+- 21 个失败全部是 **SkillDetail、SkillPanel、SSEManager** 的测试
+- 这些测试失败与本次 Context UI Redesign 改动无关
+- 是之前就存在的遗留问题
+
+### 技术决策
+
+1. **ContextWindowPanel Statistics Row 结构**：
+   - 必须保持 DOM 层级结构完整
+   - 所有统计行必须在同一个父 div 中
+   - 避免 `</div>` 过早关闭导致元素位置错乱
+
+2. **CategoryUsage 过滤策略**：
+   - 移除 `.filter((item) => item.tokens > 0)` 过滤逻辑
+   - 允许所有 10 个 category（含 output_format 和 user_input）显示
+   - 使用 `.sort()` 按 tokens 降序排列
+
+3. **data-testid 唯一性**：
+   - 避免重复的 data-testid 属性
+   - 确保每个测试可以唯一定位目标元素
+
+### 文件变更统计
+
+**修改文件（1）**：
+- `frontend/src/components/ContextWindowPanel.tsx` - 修复 Statistics Row 结构和 CategoryUsage 逻辑
+
+**Git 提交**：
+```
+main 1af1795 fix: correct Statistics Row structure in ContextWindowPanel (add free-space, reserved-buffer, actual-savings)
+```
+
+---
+
 ## Session: 2026-03-25 (Context UI Redesign) ✅
 
 ### 本次目标

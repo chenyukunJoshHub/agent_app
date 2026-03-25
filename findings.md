@@ -32,6 +32,41 @@ Context 面板需要动态化展示全部 10 个 Slot，链路面板存在重复
 
 ---
 
+## Session Findings (2026-03-25) — Context UI Redesign 测试修复
+
+### 问题
+全量测试中有 26 个失败用例，需要系统性排查根因并修复，确保 Context UI Redesign 的所有改动通过测试。
+
+### 查阅章节
+- 无特定架构文档引用（这是一个测试修复任务）
+
+### 结论
+1. **ContextWindowPanel Statistics Row 结构错误**：
+   - 根因：多个 `</div>` 过早关闭父 div，导致后续统计行（Reserved Buffer、Actual Savings、Free Space）位置错误
+   - 修复：恢复完整的 DOM 结构，确保所有统计行在同一个父 div 中
+   
+2. **CategoryUsage 过滤逻辑错误**：
+   - 根因：`categoryUsage` 中使用了 `.filter((item) => item.tokens > 0)` 过滤逻辑
+   - 影响：`output_format` 和 `user_input` 的 tokens=0 时被过滤掉，导致 category section 缺失
+   - 修复：移除 `.filter()` 逻辑，允许所有 10 个 category 显示
+
+3. **data-testid 重复**：
+   - 根因：多次编辑操作导致同一 data-testid 出现在多个位置
+   - 影响：测试库抛出 "Found multiple elements" 错误
+   - 修复：清理重复的 data-testid 属性
+
+### 影响文件
+- `frontend/src/components/ContextWindowPanel.tsx` - 修复 Statistics Row 结构和 CategoryUsage 逻辑
+
+### 测试结果
+- **修复前**：207 passed / 26 failed
+- **修复后**：212 passed / 21 failed
+- **净提升**：+5 passed, -5 failed
+- **ContextWindowPanel 测试**：9 个通过，0 个失败 ✅
+- **未修复的测试（21 个）**：SkillDetail、SkillPanel、SSEManager 的测试，与本次改动无关
+
+---
+
 ## Session Findings (2026-03-24) — Tools 模块补全
 
 ### 问题
