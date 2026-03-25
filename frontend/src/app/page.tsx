@@ -7,14 +7,15 @@ import { Activity, Bot, Layers } from 'lucide-react';
 
 import { ChatInput } from '@/components/ChatInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { ContextWindowPanel } from '@/components/ContextWindowPanel';
+import { ContextPanel } from '@/components/ContextPanel';
 import { ExecutionTracePanel } from '@/components/ExecutionTracePanel';
 import { MessageList } from '@/components/MessageList';
 import { getChatResumeUrl, getChatStreamUrl } from '@/lib/api-config';
 import { sseManager } from '@/lib/sse-manager';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/store/use-session';
-import type { SlotDetailsResponse, StateMessage } from '@/types/context-window';
+import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
+import type { SessionMeta, SlotDetailsResponse, StateMessage } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
 
 interface InterruptData {
@@ -96,13 +97,15 @@ export default function HomePage() {
     traceEvents,
     slotDetails,
     contextWindowData,
-    stateMessages,          // 新增
+    stateMessages,
+    sessionMeta,
     addMessage,
     addTraceEvent,
     setContextWindowData,
     setSlotDetails,
-    setStateMessages,       // 新增
-    incrementTurn,          // 新增
+    setStateMessages,
+    setSessionMeta,
+    incrementTurn,
     setLoading,
     setError,
   } = useSession();
@@ -110,9 +113,10 @@ export default function HomePage() {
   const [turnStatuses, setTurnStatuses] = useState<Record<string, 'done' | 'error'>>({});
 
   const setTurnStatus = (turnId: string, status: 'done' | 'error') => {
-    setTurnStatuses(prev => ({ ...prev, [turnId]: status }));
+    setTurnStatuses((prev) => ({ ...prev, [turnId]: status }));
   };
 
+  const [lastActivityTime, setLastActivityTime] = useState<number | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [currentInterrupt, setCurrentInterrupt] = useState<InterruptData | null>(null);
   const [activeTab, setActiveTab] = useState<'chain' | 'context'>('chain');
@@ -128,7 +132,12 @@ export default function HomePage() {
 
   const handleSendMessage = async (message: string) => {
     addMessage({ role: 'user', content: message });
-    incrementTurn(); // 新增：生成新 turnId
+    incrementTurn();
+    // Reset context data for the new turn (fixes real-time refresh bug)
+    setContextWindowData(EMPTY_CONTEXT_DATA);
+    setSlotDetails([]);
+    setStateMessages([]);
+    setSessionMeta(null);
     setLoading(true);
     setError(null);
 
@@ -168,6 +177,10 @@ export default function HomePage() {
 
         sseManager.on('context_window', ({ data }) => {
           setContextWindowData(data as any);
+        });
+
+        sseManager.on('session_metadata', ({ data }) => {
+          setSessionMeta(data as SessionMeta);
         });
 
         sseManager.on('thought', ({ data }) => {
@@ -244,6 +257,7 @@ export default function HomePage() {
             setTurnStatus(turnId, 'done');
           }
 
+          setLastActivityTime(Date.now());
           setLoading(false);
           sseManager.disconnect();
         });
@@ -363,7 +377,9 @@ export default function HomePage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight">Multi-Tool AI Agent</h1>
-              <p className="text-xs text-text-muted">初始化 → Context → ReAct → Memory 全链路可视化</p>
+              <p className="text-xs text-text-muted">
+                初始化 → Context → ReAct → Memory 全链路可视化
+              </p>
             </div>
           </div>
         </div>
@@ -403,7 +419,9 @@ export default function HomePage() {
               onClick={() => setActiveTab('context')}
               className={cn(
                 'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
-                activeTab === 'context' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+                activeTab === 'context'
+                  ? 'text-primary'
+                  : 'text-text-muted hover:text-text-secondary'
               )}
             >
               <Layers className="w-4 h-4" />
@@ -430,10 +448,12 @@ export default function HomePage() {
                 <ExecutionTracePanel traceEvents={traceEvents} turnStatuses={turnStatuses} />
               )}
               {activeTab === 'context' && (
-                <ContextWindowPanel
-                  data={contextWindowData}
+                <ContextPanel
+                  sessionMeta={sessionMeta}
+                  contextWindowData={contextWindowData}
                   slotDetails={slotDetails}
                   stateMessages={stateMessages}
+                  lastActivityTime={lastActivityTime}
                 />
               )}
             </motion.div>
