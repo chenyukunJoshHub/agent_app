@@ -198,7 +198,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
               className="flex items-center justify-between text-sm border-t border-border pt-2"
               data-testid="context-row-reserved-buffer"
             >
-              <span className="text-text-secondary">预留 Buffer</span>
+              <span className="text-text-secondary">预留Autocompac Buffer</span>
               <span className="text-text-primary tabular-nums">
                 {formatNumber(reservedBuffer)} (
                 {(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
@@ -261,7 +261,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
 
             {/* Reserved Buffer */}
             <div className="flex items-center justify-between text-sm border-t border-border pt-2">
-              <span className="text-text-secondary">预留 Buffer</span>
+              <span className="text-text-secondary">预留Autocompac Buffer</span>
               <span className="text-xs text-text-primary tabular-nums">
                 {formatNumber(reservedBuffer)} (
                 {(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
@@ -368,7 +368,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
               className="flex items-center justify-between text-sm"
               data-testid="stat-reserved-buffer"
             >
-              <span className="text-text-secondary">预留 Buffer</span>
+              <span className="text-text-secondary">预留Autocompac Buffer</span>
               <span className="text-xs text-text-muted">{formatNumber(reservedBuffer)}</span>
             </div>
 
