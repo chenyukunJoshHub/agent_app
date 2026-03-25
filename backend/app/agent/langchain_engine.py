@@ -28,6 +28,7 @@ from app.prompt.builder import build_system_prompt
 from app.prompt.budget import DEFAULT_BUDGET
 from app.skills.manager import SkillManager
 from app.tools.file import read_file
+from app.tools.registry import build_tool_registry
 from app.tools.search import web_search
 
 SLOT_META: dict[str, dict[str, str | int]] = {
@@ -171,9 +172,20 @@ async def create_react_agent(
     # Import send_email tool
     from app.tools.send_email import send_email
 
-    # Initialize tools (add send_email and read_file for P1)
+    # Initialize tools via build_tool_registry (unique assembly point)
     if tools is None:
-        tools = [web_search, send_email, read_file]
+        tools, tool_manager, policy_engine = build_tool_registry(enable_hil=True)
+    else:
+        from app.tools.base import ToolMeta
+        from app.tools.manager import ToolManager
+        from app.tools.policy import PolicyEngine
+        # External tools use restrictive policy by default
+        tool_metas = {
+            t.name: ToolMeta(effect_class="external_write", allowed_decisions=["ask", "deny"])
+            for t in tools
+        }
+        tool_manager = ToolManager(tool_metas)
+        policy_engine = PolicyEngine()
 
     # Ensure read_file is in tools
     if read_file not in tools:
@@ -191,7 +203,7 @@ async def create_react_agent(
     # Initialize SkillManager and build snapshot
     if skills_dir is None:
         skills_dir = settings.skills_dir
-    skill_manager = SkillManager(skills_dir=skills_dir)
+    skill_manager = SkillManager.get_instance(skills_dir=skills_dir)
     skill_snapshot = skill_manager.build_snapshot()
     logger.info(f"Built SkillSnapshot: {len(skill_snapshot.skills)} skills, version {skill_snapshot.version}")
     await emit_trace_event(
@@ -267,6 +279,28 @@ async def create_react_agent(
                 },
             ),
         )
+
+        # Session metadata for UI panel header (module 1)
+        from datetime import datetime, timezone
+        _provider = str(settings.llm_provider)
+        if _provider == "anthropic":
+            _model_name = settings.anthropic_model
+        elif _provider == "ollama":
+            _model_name = settings.ollama_model
+        else:
+            _model_name = _provider
+        await _queue_put(
+            sse_queue,
+            (
+                "session_metadata",
+                {
+                    "session_name": "Session",
+                    "model": _model_name,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ),
+        )
+
         await emit_trace_event(
             sse_queue,
             stage="context",
@@ -338,19 +372,9 @@ async def create_react_agent(
 
 
 def get_default_tools() -> list[BaseTool]:
-    """
-    Get default tools for the agent.
-
-    P0: Returns [web_search] only.
-    P1: Returns [web_search, send_email].
-    P1: Skills system: Adds [read_file] for skill activation.
-
-    Returns:
-        list[BaseTool]: Default tool list
-    """
-    from app.tools.send_email import send_email
-
-    return [web_search, send_email, read_file]
+    """Get default tools for the agent via build_tool_registry."""
+    tools, _, _ = build_tool_registry(enable_hil=True)
+    return tools
 
 
 __all__ = ["create_react_agent", "get_default_tools"]
