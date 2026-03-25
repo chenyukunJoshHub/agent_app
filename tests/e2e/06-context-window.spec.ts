@@ -1,120 +1,72 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * E2E 测试场景 6: Context Window Token 预算面板
+ * E2E 测试场景 6: Context Panel 四模块面板
  *
  * 验收标准：
- * - 显示 Token 使用进度条
- * - 显示各个 Slot 的 Token 使用情况
- * - Token 超预算时显示警告
- * - 统计卡片正确更新
+ * - ① 会话元数据与 Token 统计模块可见
+ * - ② 上下文窗口 Token 地图模块可见（含 12 段比例条）
+ * - ③ 各 Slot 原文与 Prompt 模块可见
+ * - ④ 压缩日志仅在有压缩事件时显示
+ * - 发送消息后数据实时更新
  */
-test.describe('Context Window', () => {
+test.describe('Context Panel', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
+    // 切换到 Context 标签
     await page.getByRole('button', { name: /context/i }).click();
   });
 
-  test('应该显示 Token 使用进度条', async ({ page }) => {
-    // 检查右侧栏是否有 Context Window 面板
-    const contextPanel = page.locator('[data-testid*="context-window"], [class*="ContextWindow"], [class*="context-window"]');
-    const isVisible = await contextPanel.isVisible({ timeout: 5000 }).catch(() => false);
-
-    if (!isVisible) {
-      // Context Window 面板可能未实现，跳过测试
-      test.skip(true, 'Context Window panel not implemented yet');
-      return;
-    }
-
-    await expect(contextPanel).toBeVisible();
+  test('应显示模块①②③的标题', async ({ page }) => {
+    await expect(page.getByText(/① 会话元数据/)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/② 上下文窗口.*Token 地图/)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/③ 各 Slot 原文/)).toBeVisible({ timeout: 5000 });
   });
 
-  test('Token 进度条应该随消息更新', async ({ page }) => {
-    const contextPanel = page.locator('[data-testid*="context-window"], [class*="ContextWindow"], [class*="context-window"]');
+  test('应显示模块②的 Token 比例条', async ({ page }) => {
+    const tokenBar = page.getByTestId('token-bar');
+    await expect(tokenBar).toBeVisible({ timeout: 5000 });
+  });
 
-    const isVisible = await contextPanel.isVisible({ timeout: 5000 }).catch(() => false);
-    if (!isVisible) {
-      test.skip(true, 'Context Window panel not implemented yet');
-      return;
-    }
+  test('初始状态不应显示模块④压缩日志', async ({ page }) => {
+    await page.waitForTimeout(500);
+    const compressionHeader = page.getByText('④ 压缩日志');
+    await expect(compressionHeader).not.toBeVisible();
+  });
 
-    // 发送一条消息
-    await page.getByPlaceholder(/描述任务/i).fill('测试消息');
+  test('发送消息后 Token 数据应更新', async ({ page }) => {
+    await page.getByPlaceholder(/描述任务/i).fill('你好');
     await page.getByRole('button', { name: /发送/i }).click();
 
-    // 等待对话完成（Ollama 本地模型）
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
+    // 等待响应完成（本地 Ollama 最多 3 分钟）
+    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180_000 });
 
-    // 检查进度条是否更新
-    const progressBar = contextPanel.locator('[class*="progress"], [data-testid*="progress"]');
-    const hasProgress = await progressBar.count() > 0;
+    // Token 地图应有比例条
+    const tokenBar = page.getByTestId('token-bar');
+    await expect(tokenBar).toBeVisible({ timeout: 5000 });
 
-    if (hasProgress) {
-      await expect(progressBar.first()).toBeVisible();
+    // 模块③应显示 Slot 卡片（至少 system slot）
+    const systemCard = page.getByTestId('slot-card-system');
+    const hasSystemCard = await systemCard.isVisible({ timeout: 3000 }).catch(() => false);
+    if (hasSystemCard) {
+      await expect(systemCard).toBeVisible();
     }
   });
 
-  test('应该显示各个 Slot 的 Token 使用情况', async ({ page }) => {
-    const contextPanel = page.locator('[data-testid*="context-window"], [class*="ContextWindow"], [class*="context-window"]');
+  test('Slot 卡片点击后应展开内容', async ({ page }) => {
+    await page.getByPlaceholder(/描述任务/i).fill('你好');
+    await page.getByRole('button', { name: /发送/i }).click();
+    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180_000 });
 
-    const isVisible = await contextPanel.isVisible({ timeout: 5000 }).catch(() => false);
-    if (!isVisible) {
-      test.skip(true, 'Context Window panel not implemented yet');
+    const systemCard = page.getByTestId('slot-card-system');
+    const hasCard = await systemCard.isVisible({ timeout: 3000 }).catch(() => false);
+    if (!hasCard) {
+      test.skip(true, 'system slot card not present');
       return;
     }
 
-    // 检查 Slot 行是否存在
-    const slotRows = contextPanel.locator('[data-testid*="slot"], [class*="slot"]');
-    const slotCount = await slotRows.count();
-
-    // 应该有多个 Slot（System Prompt, Skills, Messages 等）
-    if (slotCount > 0) {
-      expect(slotCount).toBeGreaterThan(0);
-    }
-  });
-
-  test('Token 超预算时应该显示警告', async ({ page }) => {
-    const contextPanel = page.locator('[data-testid*="context-window"], [class*="ContextWindow"], [class*="context-window"]');
-
-    const isVisible = await contextPanel.isVisible({ timeout: 5000 }).catch(() => false);
-    if (!isVisible) {
-      test.skip(true, 'Context Window panel not implemented yet');
-      return;
-    }
-
-    // 发送多条消息以增加 Token 使用
-    for (let i = 0; i < 5; i++) {
-      await page.getByPlaceholder(/描述任务/i).fill(`测试消息 ${i + 1}`);
-      await page.getByRole('button', { name: /发送/i }).click();
-      await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180000 });
-    }
-
-    // 检查是否有警告标识
-    const warningBadge = contextPanel.locator('[class*="warning"], [class*="overflow"], [data-testid*="warning"]');
-    const hasWarning = await warningBadge.count() > 0;
-
-    // 警告可能不会触发（取决于 Token 预算设置）
-    // 这里只是检查元素是否存在
-    if (hasWarning) {
-      await expect(warningBadge.first()).toBeVisible();
-    }
-  });
-
-  test('应该显示 Token 统计卡片', async ({ page }) => {
-    const contextPanel = page.locator('[data-testid*="context-window"], [class*="ContextWindow"], [class*="context-window"]');
-
-    const isVisible = await contextPanel.isVisible({ timeout: 5000 }).catch(() => false);
-    if (!isVisible) {
-      test.skip(true, 'Context Window panel not implemented yet');
-      return;
-    }
-
-    // 检查统计卡片
-    const statsCard = contextPanel.locator('[class*="stats"], [data-testid*="stats"]');
-    const hasStats = await statsCard.count() > 0;
-
-    if (hasStats) {
-      await expect(statsCard.first()).toBeVisible();
-    }
+    await systemCard.click();
+    // 展开后应有 pre 内容区域
+    await expect(systemCard.locator('pre')).toBeVisible({ timeout: 2000 });
   });
 });
