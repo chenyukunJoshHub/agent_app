@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand';
 
-import type { ContextWindowData, StateMessage } from '@/types/context-window';
+import type { ContextWindowData, SessionMeta, StateMessage } from '@/types/context-window';
 import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
 
@@ -51,6 +51,9 @@ export interface SessionState {
   // Backend state messages
   stateMessages: StateMessage[];
 
+  // Session metadata (from session_metadata SSE event)
+  sessionMeta: SessionMeta | null;
+
   // Detailed execution trace
   traceEvents: TraceEvent[];
 
@@ -78,6 +81,7 @@ export interface SessionState {
   ) => void;
   incrementTurn: () => void;
   setStateMessages: (msgs: StateMessage[]) => void;
+  setSessionMeta: (meta: SessionMeta | null) => void;
   addTraceEvent: (event: TraceEvent) => void;
   clearTraceEvents: () => void;
   setLoading: (loading: boolean) => void;
@@ -96,6 +100,7 @@ export const useSession = create<SessionState>((set, _get) => ({
   currentTurnId: null,
   turnCounter: 0,
   stateMessages: [],
+  sessionMeta: null,
   traceEvents: [],
   sessionId: `session_${Date.now()}`,
   userId: 'dev_user',
@@ -145,6 +150,8 @@ export const useSession = create<SessionState>((set, _get) => ({
 
   setStateMessages: (msgs) => set({ stateMessages: msgs }),
 
+  setSessionMeta: (meta) => set({ sessionMeta: meta }),
+
   addTraceEvent: (event) => {
     set((state) => ({
       // keep only latest 500 to avoid unbounded growth
@@ -167,6 +174,7 @@ export const useSession = create<SessionState>((set, _get) => ({
     set({
       messages: [],
       stateMessages: [],
+      sessionMeta: null,
       traceEvents: [],
       tokenUsed: 0,
       contextWindowData: EMPTY_CONTEXT_DATA,

@@ -308,4 +308,33 @@ describe("useSession", () => {
       expect(useSession.getState().stateMessages).toEqual([]);
     });
   });
+
+  describe("sessionMeta", () => {
+    it("初始值应为 null", () => {
+      const state = useSession.getState();
+      expect(state.sessionMeta).toBeNull();
+    });
+
+    it("setSessionMeta 应更新 sessionMeta", () => {
+      const meta = { session_name: "test", model: "claude", created_at: "2026-01-01T00:00:00Z" };
+      useSession.getState().setSessionMeta(meta);
+      expect(useSession.getState().sessionMeta).toEqual(meta);
+    });
+
+    it("setSessionMeta(null) 应清空 sessionMeta", () => {
+      useSession.getState().setSessionMeta({ session_name: "x", model: "y", created_at: "z" });
+      useSession.getState().setSessionMeta(null);
+      expect(useSession.getState().sessionMeta).toBeNull();
+    });
+  });
+
+  describe("sessionMeta reset on clearMessages", () => {
+    it("clearMessages 应将 sessionMeta 重置为 null", () => {
+      useSession.getState().setSessionMeta({
+        session_name: "s", model: "m", created_at: "c",
+      });
+      useSession.getState().clearMessages();
+      expect(useSession.getState().sessionMeta).toBeNull();
+    });
+  });
 });
