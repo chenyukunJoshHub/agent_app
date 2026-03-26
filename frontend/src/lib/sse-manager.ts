@@ -18,6 +18,7 @@ const EVENT_TYPES: SSEEventType[] = [
   'token_update',
   'context_window',
   'slot_details',
+  'slot_update',
   'session_metadata',
   'error',
   'done',
@@ -34,6 +35,7 @@ export type SSEEventType =
   | 'token_update'
   | 'context_window'
   | 'slot_details'
+  | 'slot_update'
   | 'session_metadata'
   | 'error'
   | 'done';
@@ -53,6 +55,8 @@ export interface ConnectionOptions {
   message: string;
   session_id: string;
   user_id: string;
+  skill_id?: string;         // 新增
+  invocation_mode?: string;  // 新增
 }
 
 // ============================================================================
@@ -94,6 +98,10 @@ export class SSEManager {
       session_id: options.session_id,
       user_id: options.user_id,
     });
+
+    // 在现有三个 params.append 之后添加：
+    if (options.skill_id) params.append('skill_id', options.skill_id);
+    if (options.invocation_mode) params.append('invocation_mode', options.invocation_mode);
 
     const fullUrl = `${url}?${params.toString()}`;
 
@@ -140,17 +148,14 @@ export class SSEManager {
               ? 'CLOSED'
               : 'UNKNOWN';
 
-      console.error(`[SSE] Error (readyState: ${stateName}):`, error);
-
       // Handle based on readyState
       if (readyState === EventSource.OPEN) {
-        // Connection is still open - might be a transient error
-        // Don't disconnect, just emit error event
-        this.emit('error', {
-          message: 'SSE 连接出现临时错误，连接保持打开',
-        });
+        // Browser fires onerror when the server closes the stream normally — not a real error
+        console.debug('[SSE] stream ended (readyState: OPEN)');
         return;
       }
+
+      console.error(`[SSE] Error (readyState: ${stateName}):`, error);
 
       // For CONNECTING or CLOSED states, trigger reconnection logic
       this.setState('error');
