@@ -15,8 +15,10 @@ class MemoryManager:
 
     P0 Implementation:
     - load_episodic: Loads user profile from store (returns empty if not found)
-    - save_episodic: No-op (P0 stub)
-    - build_ephemeral_prompt: Builds injection text for System Prompt
+    - save_episodic: No-op (P0 stub — P2 will implement with dirty flag)
+    - build_injection_parts: Iterates processors for ephemeral injection
+    - build_ephemeral_prompt: Deprecated wrapper (delegates to EpisodicProcessor)
+    - load_procedural / save_procedural: Load/save workflow SOPs
 
     P2 Future:
     - Implement save_episodic with dirty flag optimization
@@ -60,16 +62,14 @@ class MemoryManager:
     async def save_episodic(self, user_id: str, data: UserProfile) -> None:
         """Save user profile to store.
 
+        P0: No-op (stub implementation).
+
         Args:
             user_id: User identifier
             data: UserProfile to save
         """
-        data.user_id = user_id
-        await self.store.aput(
-            namespace=("profile", user_id),
-            key="episodic",
-            value=data.model_dump(),
-        )
+        # P0: Don't write to store yet
+        pass
 
     def build_ephemeral_prompt(self, ctx: MemoryContext) -> str:
         """Build episodic injection text (deprecated — use build_injection_parts).
