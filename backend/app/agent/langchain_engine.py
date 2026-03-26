@@ -365,7 +365,7 @@ async def create_react_agent(
     config: dict | None = None,
 ) -> CompiledStateGraph:
     """
-    Get (or build) the cached ReAct agent, then emit per-request setup SSE events.
+    Get (or build) cached ReAct agent, then emit per-request setup SSE events.
 
     The agent graph is compiled once and reused across requests.
     SSE queue and user_id are injected per-request via AgentContext
@@ -382,24 +382,33 @@ async def create_react_agent(
     """
     global _agent_cache
     global _agent_cache_lock
+    import time
+    start_time = time.time()
 
-    async with _agent_cache_lock:
-        if _agent_cache is None:
-            try:
-                _agent_cache = await _build_agent_internal(llm, tools, skills_dir)
-            except Exception as e:
-                logger.error(f"❌ [初始化] Agent 创建失败: {e}")
-                if sse_queue is not None:
-                    await emit_trace_event(
-                        sse_queue, stage="agent_init", step="agent_create_failed",
-                        status="error", payload={"error": str(e)},
-                    )
-                raise
+    if _agent_cache is None:
+        async with _agent_cache_lock:
+            if _agent_cache is None:
+                try:
+                    _agent_cache = await _build_agent_internal(llm, tools, skills_dir)
+                except Exception as e:
+                    elapsed = time.time() - start_time
+                    logger.error(f"❌ [初始化] Agent 创建失败: {e}，耗时={elapsed:.2f}s")
+                    if sse_queue is not None:
+                        await emit_trace_event(
+                            sse_queue, stage="agent_init", step="agent_create_failed",
+                            status="error", payload={"error": str(e), "elapsed_seconds": elapsed},
+                        )
+                    raise
+            else:
+                logger.info("✅ [初始化] 使用缓存 Agent（跳过重新编译）")
     else:
         logger.info("✅ [初始化] 使用缓存 Agent（跳过重新编译）")
 
     # Always emit per-request setup events
+    setup_start = time.time()
     await emit_setup_events(sse_queue, _agent_cache, config)
+    setup_elapsed = time.time() - setup_start
+    logger.debug(f"📊 [初始化] emit_setup_events 耗时={setup_elapsed:.3f}s")
 
     return _agent_cache.graph
 
