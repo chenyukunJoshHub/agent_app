@@ -53,3 +53,27 @@ class EpisodicProcessor(BaseInjectionProcessor):
             return ""
         lines = [f"  {k}: {v}" for k, v in ctx.episodic.preferences.items()]
         return "\n\n[用户画像]\n" + "\n".join(lines)
+
+
+class ProceduralProcessor(BaseInjectionProcessor):
+    """Procedural memory processor: workflow SOPs.
+
+    Output format (when workflows non-empty):
+
+        \\n\\n[程序记忆 - 工作流 SOP]\\n
+        \\n### 合同审查流程\\n1. 先搜索...\\n2. 再发邮件...
+
+    Returns "" when workflows is empty or missing.
+    """
+
+    slot_name = "procedural"
+    display_name = "工作流 SOP"
+
+    def build_prompt(self, ctx: MemoryContext) -> str:
+        if not ctx.procedural.workflows:
+            return ""
+        lines = [
+            f"\n### {name}\n{instruction}"
+            for name, instruction in ctx.procedural.workflows.items()
+        ]
+        return "\n\n[程序记忆 - 工作流 SOP]\n" + "\n".join(lines)
