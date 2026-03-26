@@ -17,6 +17,7 @@ import { useSession } from '@/store/use-session';
 import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
 import type { SessionMeta, SlotDetailsResponse, StateMessage } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
+import type { TraceBlock } from '@/types/trace';
 
 interface InterruptData {
   interrupt_id: string;
@@ -44,6 +45,18 @@ function isTraceEvent(data: unknown): data is TraceEvent {
     typeof record.status === 'string' &&
     typeof record.payload === 'object' &&
     record.payload !== null
+  );
+}
+
+function isTraceBlock(data: unknown): data is TraceBlock {
+  if (typeof data !== 'object' || data === null) return false;
+  const record = data as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    typeof record.timestamp === 'string' &&
+    typeof record.type === 'string' &&
+    typeof record.status === 'string' &&
+    typeof record.duration_ms === 'number'
   );
 }
 
@@ -101,6 +114,8 @@ export default function HomePage() {
     sessionMeta,
     addMessage,
     addTraceEvent,
+    addTraceBlock,
+    clearTraceBlocks,
     setContextWindowData,
     setSlotDetails,
     setStateMessages,
@@ -174,6 +189,12 @@ export default function HomePage() {
           }
         });
 
+        sseManager.on('trace_block', ({ data }) => {
+          if (isTraceBlock(data)) {
+            addTraceBlock(data);
+          }
+        });
+
         sseManager.on('slot_details', ({ data }) => {
           const payload = data as SlotDetailsResponse;
           if (payload.slots) {
@@ -191,12 +212,13 @@ export default function HomePage() {
             display_name: string;
             tokens: number;
             enabled: boolean;
+            content?: string;
           };
           // 合并单个 slot 到 slotDetails
           const currentSlots = useSession.getState().slotDetails;
           const oldTokens = currentSlots.find((s) => s.name === updated.name)?.tokens ?? 0;
           const merged = currentSlots.filter((s) => s.name !== updated.name);
-          merged.push({ ...updated, content: '' });
+          merged.push({ ...updated, content: updated.content ?? '' });
           setSlotDetails(merged);
           // 同步更新 contextWindowData 的 total_used / total_remaining / slotUsage
           const ctx = useSession.getState().contextWindowData;
@@ -325,20 +347,20 @@ export default function HomePage() {
           setError(message);
           setLoading(false);
           sseManager.disconnect();
-         });
-       }
+        });
+      }
 
-       sseManager.on('skill_invoked', ({ data }) => {
-         const { skill_id, description } = data as { skill_id: string; description: string };
-         const currentSlots = useSession.getState().slotDetails;
-         const updated = currentSlots.map((s) =>
-           s.name === 'skill_registry'
-             ? { ...s, content: `[手动激活] ${skill_id}: ${description}` }
-             : s
-         );
-         setSlotDetails(updated);
-       });
-     } catch (error) {
+      sseManager.on('skill_invoked', ({ data }) => {
+        const { skill_id, description } = data as { skill_id: string; description: string };
+        const currentSlots = useSession.getState().slotDetails;
+        const updated = currentSlots.map((s) =>
+          s.name === 'skill_registry'
+            ? { ...s, content: `[手动激活] ${skill_id}: ${description}` }
+            : s
+        );
+        setSlotDetails(updated);
+      });
+    } catch (error) {
       clearLoadTimeout();
       setError(error instanceof Error ? error.message : '发送消息失败');
       setLoading(false);
@@ -366,6 +388,13 @@ export default function HomePage() {
         if (event === 'trace_event') {
           if (isTraceEvent(data)) {
             addTraceEvent(data);
+          }
+          return;
+        }
+
+        if (event === 'trace_block') {
+          if (isTraceBlock(data)) {
+            addTraceBlock(data);
           }
           return;
         }
@@ -405,6 +434,13 @@ export default function HomePage() {
         if (event === 'trace_event') {
           if (isTraceEvent(data)) {
             addTraceEvent(data);
+          }
+          return;
+        }
+
+        if (event === 'trace_block') {
+          if (isTraceBlock(data)) {
+            addTraceBlock(data);
           }
           return;
         }

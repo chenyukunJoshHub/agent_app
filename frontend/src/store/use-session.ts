@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import type { ContextWindowData, SessionMeta, StateMessage } from '@/types/context-window';
 import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
 import type { TraceEvent } from '@/types/trace';
+import type { TraceBlock } from '@/types/trace';
 
 export interface Message {
   id: string;
@@ -57,6 +58,9 @@ export interface SessionState {
   // Detailed execution trace
   traceEvents: TraceEvent[];
 
+  // Semantic execution blocks
+  traceBlocks: TraceBlock[];
+
   // Current session
   sessionId: string;
   userId: string;
@@ -84,6 +88,8 @@ export interface SessionState {
   setSessionMeta: (meta: SessionMeta | null) => void;
   addTraceEvent: (event: TraceEvent) => void;
   clearTraceEvents: () => void;
+  addTraceBlock: (block: TraceBlock) => void;
+  clearTraceBlocks: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setSessionId: (sessionId: string) => void;
@@ -102,6 +108,7 @@ export const useSession = create<SessionState>((set, _get) => ({
   stateMessages: [],
   sessionMeta: null,
   traceEvents: [],
+  traceBlocks: [],
   sessionId: `session_${Date.now()}`,
   userId: 'dev_user',
   isLoading: false,
@@ -164,6 +171,17 @@ export const useSession = create<SessionState>((set, _get) => ({
 
   clearTraceEvents: () => set({ traceEvents: [] }),
 
+  addTraceBlock: (block) => {
+    set((state) => ({
+      traceBlocks: [
+        ...state.traceBlocks,
+        { ...block, turnId: state.currentTurnId ?? undefined },
+      ].slice(-200),
+    }));
+  },
+
+  clearTraceBlocks: () => set({ traceBlocks: [] }),
+
   setLoading: (loading) => set({ isLoading: loading }),
 
   setError: (error) => set({ error }),
@@ -176,6 +194,7 @@ export const useSession = create<SessionState>((set, _get) => ({
       stateMessages: [],
       sessionMeta: null,
       traceEvents: [],
+      traceBlocks: [],
       tokenUsed: 0,
       contextWindowData: EMPTY_CONTEXT_DATA,
       slotDetails: [],

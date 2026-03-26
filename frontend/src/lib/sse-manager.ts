@@ -13,6 +13,7 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 const DEFAULT_BASE_RECONNECT_DELAY = 100; // ms
 const EVENT_TYPES: SSEEventType[] = [
   'trace_event',
+  'trace_block',
   'thought',
   'hil_interrupt',
   'token_update',
@@ -31,6 +32,7 @@ const EVENT_TYPES: SSEEventType[] = [
 
 export type SSEEventType =
   | 'trace_event'
+  | 'trace_block'
   | 'thought'
   | 'hil_interrupt'
   | 'token_update'
@@ -57,8 +59,8 @@ export interface ConnectionOptions {
   message: string;
   session_id: string;
   user_id: string;
-  skill_id?: string;         // 新增
-  invocation_mode?: string;  // 新增
+  skill_id?: string; // 新增
+  invocation_mode?: string; // 新增
 }
 
 // ============================================================================
