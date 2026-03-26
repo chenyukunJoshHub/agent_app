@@ -211,7 +211,7 @@ class MemoryMiddleware(AgentMiddleware):
         # --- 3. Emit slot_update for each processor + history ---
         # Build display_name lookup from processors (required by emit_slot_update signature).
         display_names = {p.slot_name: p.display_name for p in self.mm.processors}
-
+        
         # Emit per-processor slot (generic — works for any future processor).
         # emit_slot_update handles sse_queue=None as a no-op, so always called.
         # Called via _fire_slot to handle both async (production) and sync (test) contexts.
@@ -222,6 +222,7 @@ class MemoryMiddleware(AgentMiddleware):
                 display_name=display_names.get(slot_name, ""),
                 tokens=count_tokens(text) if text else 0,
                 enabled=bool(text),
+                content=text,
             )
             try:
                 asyncio.create_task(coro)

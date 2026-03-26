@@ -38,6 +38,7 @@ class UserProfile(BaseModel):
         preferences: User preferences (domain, language, style, etc.)
         interaction_count: Total number of interactions across sessions
         summary: User profile summary
+        content: Full user persona content (Markdown text)
     """
 
     user_id: str = Field(default="", description="User identifier")
@@ -46,6 +47,7 @@ class UserProfile(BaseModel):
     )
     interaction_count: int = Field(default=0, ge=0, description="Total interaction count")
     summary: str = Field(default="", description="User profile summary")
+    content: str = Field(default="", description="Full user persona content (Markdown text)")
 
 
 class ProceduralMemory(BaseModel):

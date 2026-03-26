@@ -84,14 +84,16 @@ class SlotContentTracker:
     SLOT_DISPLAY_NAMES: dict[str, str] = {
         "system": "系统提示词",
         "active_skill": "活跃技能",
-        "few_shot": "动态示例",
+        "few_shot": "静态示例",
         "rag": "背景知识",
         "episodic": "用户画像",
         "procedural": "程序记忆",
         "tools": "工具定义",
-        "history": "会话历史",
+        "history": "对话历史",
         "output_format": "输出格式",
         "user_input": "用户输入",
+        "skill_registry": "Skill 注册表",
+        "skill_protocol": "Skill 协议",
     }
 
     def __init__(self) -> None:

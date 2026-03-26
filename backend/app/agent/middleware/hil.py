@@ -10,6 +10,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 from loguru import logger
 
+from app.agent.context import AgentContext
 from app.observability.interrupt_store import InterruptStore
 from app.observability.trace_events import emit_trace_event
 
@@ -32,39 +33,30 @@ class HILMiddleware(AgentMiddleware):
     def __init__(
         self,
         interrupt_store: InterruptStore,
-        sse_queue: Any | None = None,
         interrupt_on: dict[str, bool] | None = None,
     ) -> None:
-        """
-        Initialize HIL Middleware.
+        """Initialize HIL Middleware.
 
         Args:
-            interrupt_store: InterruptStore for persisting interrupt states
-            sse_queue: SSE event queue (injected at runtime)
-            interrupt_on: Dictionary mapping tool names to interrupt requirement
-                         Default: {"send_email": True}
+            interrupt_store: InterruptStore for persisting interrupt states.
+            interrupt_on: Tool names that require HIL. Default: {"send_email": True}.
+                SSE queue is injected per-request via runtime.context (AgentContext).
         """
         self.interrupt_store = interrupt_store
-        self.sse_queue = sse_queue
         self.interrupt_on = interrupt_on or {"send_email": True}
-        # Use dict to support concurrent requests: session_id -> interrupt_id
+        # session_id -> interrupt_id; shared across cached agent instances
         self._pending_interrupts: dict[str, str] = {}
 
         logger.info(
             f"HILMiddleware initialized with interrupt_on={self.interrupt_on}"
         )
 
-    async def _send_sse_event(self, event_type: str, data: dict[str, Any]) -> None:
-        """
-        Send an event to the SSE queue.
-
-        Args:
-            event_type: Event type (hil_interrupt, error, etc.)
-            data: Event payload
-        """
-        if self.sse_queue is not None:
+    @staticmethod
+    async def _send_sse_event(sse_queue: Any, event_type: str, data: dict[str, Any]) -> None:
+        """Send an event to the SSE queue."""
+        if sse_queue is not None:
             try:
-                await self.sse_queue.put((event_type, data))
+                await sse_queue.put((event_type, data))
                 logger.debug(f"SSE event sent: {event_type}")
             except Exception as e:
                 logger.error(f"Failed to send SSE event: {e}")
@@ -124,6 +116,8 @@ class HILMiddleware(AgentMiddleware):
             dict | None: State updates (None for HIL middleware)
         """
         logger.debug("HILMiddleware: abefore_agent called")
+        ctx: AgentContext | None = getattr(runtime, "context", None)
+        sse_queue = ctx.sse_queue if ctx else None
 
         # Extract tool calls from the last AI message
         tool_calls = self._extract_tool_calls_from_state(state)
@@ -155,6 +149,7 @@ class HILMiddleware(AgentMiddleware):
 
                 # Push hil_interrupt event to frontend
                 await self._send_sse_event(
+                    sse_queue,
                     "hil_interrupt",
                     {
                         "interrupt_id": interrupt_id,
@@ -165,7 +160,7 @@ class HILMiddleware(AgentMiddleware):
                     },
                 )
                 await emit_trace_event(
-                    self.sse_queue,
+                    sse_queue,
                     stage="hil",
                     step="interrupt_emitted",
                     payload={
@@ -241,7 +236,7 @@ class HILMiddleware(AgentMiddleware):
         return None
 
     async def handle_resume_decision(
-        self, interrupt_id: str, approved: bool
+        self, interrupt_id: str, approved: bool, sse_queue: Any = None
     ) -> dict[str, Any]:
         """
         Handle user's resume decision (approve/reject).
@@ -273,7 +268,7 @@ class HILMiddleware(AgentMiddleware):
         if approved:
             logger.info(f"User approved interrupt {interrupt_id} for tool {tool_name}")
             await emit_trace_event(
-                self.sse_queue,
+                sse_queue,
                 stage="hil",
                 step="resume_approved",
                 payload={"interrupt_id": interrupt_id, "tool_name": tool_name},
@@ -287,7 +282,7 @@ class HILMiddleware(AgentMiddleware):
         else:
             logger.info(f"User rejected interrupt {interrupt_id} for tool {tool_name}")
             await emit_trace_event(
-                self.sse_queue,
+                sse_queue,
                 stage="hil",
                 step="resume_rejected",
                 payload={"interrupt_id": interrupt_id, "tool_name": tool_name},

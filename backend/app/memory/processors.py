@@ -39,17 +39,24 @@ class BaseInjectionProcessor(ABC):
 class EpisodicProcessor(BaseInjectionProcessor):
     """Episodic memory processor: user profile preferences.
 
-    Output format (when preferences non-empty):
+    Output format (when content is provided):
+        Returns the full user persona content directly.
 
+    Output format (when preferences non-empty but no content):
         \\n\\n[用户画像]\\n  domain: legal-tech\\n  language: zh
 
-    Returns "" when preferences is empty or missing.
+    Returns "" when both content and preferences are empty or missing.
     """
 
     slot_name = "episodic"
     display_name = "用户画像"
 
     def build_prompt(self, ctx: MemoryContext) -> str:
+        # Priority 1: Use full content if provided
+        if ctx.episodic.content:
+            return ctx.episodic.content
+
+        # Priority 2: Fall back to preferences dict (legacy format)
         if not ctx.episodic.preferences:
             return ""
         lines = [f"  {k}: {v}" for k, v in ctx.episodic.preferences.items()]

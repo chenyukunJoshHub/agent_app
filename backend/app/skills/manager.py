@@ -178,6 +178,7 @@ class SkillManager:
                 # 解析失败，跳过该文件
                 continue
 
+        self._definitions = definitions
         return definitions
 
     def _parse_skill_file(self, skill_file: Path) -> SkillDefinition | None:
@@ -517,3 +518,24 @@ class SkillManager:
         lines.append("</skills>")
 
         return "\n".join(lines)
+
+    def read_skill_content(self, skill_name: str) -> str:
+        if not hasattr(self, "_definitions"):
+            self._definitions = []
+        if not self._definitions:
+            self.scan()
+        for defn in self._definitions:
+            if defn.name == skill_name:
+                skill_file = Path(defn.file_path)
+                if not skill_file.is_absolute():
+                    skill_file = self.skills_dir / skill_file.name
+
+                # Path boundary check: ensure resolved path is within skills_dir
+                resolved = skill_file.resolve()
+                if not resolved.is_relative_to(self.skills_dir):
+                    return f"Error: skill '{skill_name}' path '{resolved}' is outside skills directory '{self.skills_dir}'"
+
+                if skill_file.exists():
+                    return skill_file.read_text(encoding="utf-8")
+        available = ", ".join(d.name for d in self._definitions)
+        return f"Error: skill '{skill_name}' not found. Available: [{available}]"

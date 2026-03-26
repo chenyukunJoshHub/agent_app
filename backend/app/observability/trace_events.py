@@ -57,4 +57,40 @@ async def emit_trace_event(
         await put_result
 
 
-__all__ = ["build_trace_event", "emit_trace_event"]
+async def emit_slot_update(
+    queue: Any | None,
+    *,
+    name: str,
+    display_name: str,
+    tokens: int,
+    enabled: bool = True,
+    content: str = "",
+) -> None:
+    """Emit a `slot_update` SSE event to refresh a single context slot in UI.
+    
+    Call this after any runtime injection that changes a slot's token count
+    (e.g. episodic memory, RAG, procedural).
+    
+    Args:
+        queue: SSE event queue (no-op if None)
+        name: Slot name, e.g. "episodic", "rag", "procedural"
+        display_name: Human-readable label shown in ContextPanel
+        tokens: Actual token count after injection
+        enabled: Whether slot is active
+        content: Actual injected content (prompt text) for display in ContextPanel
+    """
+    if queue is None:
+        return
+    event_tuple = ("slot_update", {
+        "name": name,
+        "display_name": display_name,
+        "tokens": tokens,
+        "enabled": enabled,
+        "content": content,
+    })
+    put_result = queue.put(event_tuple)
+    if isawaitable(put_result):
+        await put_result
+
+
+__all__ = ["build_trace_event", "emit_trace_event", "emit_slot_update"]

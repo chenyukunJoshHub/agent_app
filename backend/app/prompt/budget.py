@@ -6,13 +6,14 @@
 使用 tiktoken 进行精确 Token 计数，而不是字符近似估算。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from app.utils.token import count_tokens
+from app.config import get_settings
 
 
 @dataclass
 class TokenBudget:
-    """Token 预算配置（Claude Sonnet 4.6）
+    """Token 预算配置（从配置文件读取）
 
     设计理念：
     - 模型硬上限 200K，但 Agent 工作预算设为 32K
@@ -23,30 +24,53 @@ class TokenBudget:
     - 固定 Slot：System Prompt + 用户画像 + 工具 Schema
     - 弹性 Slot：会话历史（占大头）
     - 预留 Slot：输出（8K）
+
+    所有配置从 .env 文件读取，避免硬编码
     """
 
     # -------------------------------------------------------------------------
-    # 模型规格
+    # 模型规格（从配置读取）
     # -------------------------------------------------------------------------
-    MODEL_CONTEXT_WINDOW: int = 200_000   # 200K 硬上限
-    MODEL_MAX_OUTPUT: int = 8_192         # 标准输出上限
+    MODEL_CONTEXT_WINDOW: int = field(init=False)
+    MODEL_MAX_OUTPUT: int = field(init=False)
 
     # -------------------------------------------------------------------------
-    # Agent 工作预算
+    # Agent 工作预算（从配置读取）
     # -------------------------------------------------------------------------
-    WORKING_BUDGET: int = 32_768          # 32K 工作预算
+    WORKING_BUDGET: int = field(init=False)
 
     # -------------------------------------------------------------------------
-    # Slot 配置（P0/P1/P2 渐进式）
+    # Slot 配置（从配置读取）
     # -------------------------------------------------------------------------
-    SLOT_OUTPUT: int = 8_192              # 输出预留
-    SLOT_SYSTEM: int = 2_000              # System Prompt + Few-shot
-    SLOT_ACTIVE_SKILL: int = 0            # P1 改为 1_500
-    SLOT_FEW_SHOT: int = 0                # P1 改为 800
-    SLOT_RAG: int = 0                     # P2 改为 2_000
-    SLOT_EPISODIC: int = 500              # 用户画像
-    SLOT_PROCEDURAL: int = 0              # P2 改为 400
-    SLOT_TOOLS: int = 1_200               # 工具 Schema
+    SLOT_OUTPUT: int = field(init=False)
+    SLOT_SYSTEM: int = field(init=False)
+    SLOT_ACTIVE_SKILL: int = field(init=False)
+    SLOT_FEW_SHOT: int = field(init=False)
+    SLOT_RAG: int = field(init=False)
+    SLOT_EPISODIC: int = field(init=False)
+    SLOT_PROCEDURAL: int = field(init=False)
+    SLOT_TOOLS: int = field(init=False)
+    AUTO_COMPACT_BUFFER_RATIO: float = field(init=False)
+
+    # -------------------------------------------------------------------------
+    # 初始化
+    # -------------------------------------------------------------------------
+    def __post_init__(self):
+        """从配置文件读取所有 Token 预算配置"""
+        settings = get_settings()
+
+        self.MODEL_CONTEXT_WINDOW = settings.token_model_context_window
+        self.MODEL_MAX_OUTPUT = settings.token_max_output
+        self.WORKING_BUDGET = settings.token_working_budget
+        self.SLOT_OUTPUT = settings.token_slot_output
+        self.SLOT_SYSTEM = settings.token_slot_system
+        self.SLOT_ACTIVE_SKILL = settings.token_slot_active_skill
+        self.SLOT_FEW_SHOT = settings.token_slot_few_shot
+        self.SLOT_RAG = settings.token_slot_rag
+        self.SLOT_EPISODIC = settings.token_slot_episodic
+        self.SLOT_PROCEDURAL = settings.token_slot_procedural
+        self.SLOT_TOOLS = settings.token_slot_tools
+        self.AUTO_COMPACT_BUFFER_RATIO = settings.token_autocompact_buffer_ratio
 
     # -------------------------------------------------------------------------
     # 计算属性

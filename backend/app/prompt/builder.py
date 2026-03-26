@@ -21,27 +21,17 @@ from app.prompt.templates import (
     SKILL_REGISTRY_TEMPLATE,
     STATIC_FEW_SHOT,
     USER_PROFILE_TEMPLATE,
+    SKILL_PROTOCOL,
+    USAGE_GUIDE,
 )
 from app.prompt.slot_tracker import SlotContentTracker, SlotSnapshot
-
-# Skill Protocol - 四个约定（注入 System Prompt）
-SKILL_PROTOCOL = """
-## Skill 使用协议
-
-当你需要使用特定技能时，遵循以下约定：
-
-1. **识别约定**：当用户请求匹配某个 skill 的 description 时，在本次 ReAct 循环中激活该 skill。
-2. **调用约定**：使用 read_file 工具读取 skill 的 file_path 获取完整内容。
-3. **执行约定**：严格按照 SKILL.md 中的 Instructions 执行，遵循 Examples 的格式。
-4. **冲突约定**：同一 turn 内只激活一个 skill，避免 Token 消耗过大。
-"""
 
 
 def build_system_prompt(
     skill_snapshot: SkillSnapshot | None = None,
     episodic: UserProfile | None = None,
     available_tools: list[str] | None = None,
-    active_skill_content: str | None = None,
+    active_skill_content: str | None = None,  # 保留参数以兼容调用方；当前不注入 system prompt
     track_slots: bool = True,
 ) -> str | tuple[str, SlotSnapshot]:
     """
@@ -51,7 +41,7 @@ def build_system_prompt(
         skill_snapshot: Skill 快照（包含 skills 列表和 prompt）（P1）
         episodic: 用户画像数据（UserProfile）（P0+）
         available_tools: 可用工具列表（P0）
-        active_skill_content: 当前激活的 skill 内容（P1）
+        active_skill_content: 当前激活的 skill 内容（P1，当前不注入 system prompt）
         track_slots: 是否跟踪 Slot 内容和 token 计数（默认 True）
 
     Returns:
@@ -135,38 +125,34 @@ def build_system_prompt(
         tracker.add_slot("few_shot", STATIC_FEW_SHOT, "静态示例")
 
     # P0+: 用户画像动态注入（Ephemeral）
+    # 注意：MemoryMiddleware.wrap_model_call() 在每次 LLM call 前会动态追加 episodic 内容。
+    # build_system_prompt() 初始化时无 user_id，无法预加载，因此内容为空。
+    # 但仍需向 tracker 注册此 slot，使 ContextPanel 能正确展示 slot 状态。
     episodic_content = ""
     if episodic and episodic.preferences:
         prefs_text = "\n".join(f"- {k}: {v}" for k, v in episodic.preferences.items())
         episodic_content = USER_PROFILE_TEMPLATE.format(preferences=prefs_text)
         parts.append(episodic_content)
 
-        if tracker:
-            tracker.add_slot("episodic", episodic_content, "用户画像", enabled=bool(episodic_content))
+    if tracker:
+        tracker.add_slot("episodic", episodic_content, "用户画像", enabled=bool(episodic_content))
 
-    # Slot ②: Active Skill 内容（如果有）
-    if active_skill_content:
-        if tracker:
-            tracker.add_slot("active_skill", active_skill_content, "活跃技能")
+    # Slot ②: Active Skill 内容（当前不注入 System Prompt）
+    # active_skill 内容通过 tools message 链路注入，不在此处重复注入，避免上下文冗余。
+
+    # P2 预留 slot：history、rag、procedural — 内容为空，但注册使 ContextPanel 可见
+    if tracker:
+        tracker.add_slot("history", "", "对话历史", enabled=True)
+        tracker.add_slot("rag", "", "背景知识", enabled=False)
+        tracker.add_slot("procedural", "", "程序记忆", enabled=True)
 
     # 使用指南
-    usage_guide = "\n".join([
-        "## 使用指南",
-        "1. 首先理解用户需求",
-        "2. 判断是否需要激活某个 skill（参考 skill 的 description）",
-        "3. 如果需要，使用 read_file 读取对应的 SKILL.md",
-        "4. 按 skill 的 Instructions 执行任务",
-        "5. 如果不需要 skill，直接使用可用工具完成任务",
-        "",
-        "## 重要",
-        "- 不要编造信息",
-        "- 保持回答简洁但完整",
-        "- send_email 操作需要用户确认后才会执行",
-    ])
-    parts.append(usage_guide)
+    parts.append(USAGE_GUIDE)
 
     if tracker:
-        tracker.add_slot("output_format", usage_guide, "输出格式")
+        # TODO: output_format slot 的实际内容是 USAGE_GUIDE（行为流程说明），
+        # 语义上与"输出格式"不同，待后续重构时拆分。
+        tracker.add_slot("output_format", USAGE_GUIDE, "输出格式")
 
     prompt = "\n".join(parts)
 
@@ -210,7 +196,7 @@ def get_slot_snapshot(
     skill_snapshot: SkillSnapshot | None = None,
     episodic: UserProfile | None = None,
     available_tools: list[str] | None = None,
-    active_skill_content: str | None = None,
+    active_skill_content: str | None = None,  # 保留参数以兼容调用方；当前不注入
 ) -> SlotSnapshot:
     """
     构建 Slot 快照（不返回完整 prompt，仅返回 Slot 信息）。
@@ -219,7 +205,7 @@ def get_slot_snapshot(
         skill_snapshot: Skill 快照
         episodic: 用户画像
         available_tools: 可用工具列表
-        active_skill_content: 激活的 skill 内容
+        active_skill_content: 激活的 skill 内容（当前不注入）
 
     Returns:
         SlotSnapshot: Slot 快照

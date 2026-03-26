@@ -127,6 +127,7 @@ async def _run_agent_stream(
     tools_logger: "ToolsLogger",
     sse_logger: "SseLogger",
     skill_id: str | None = None,
+    invocation_mode: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Run agent and yield SSE events.
@@ -143,7 +144,11 @@ async def _run_agent_stream(
         str: SSE-formatted event strings
     """
     # Create SSE queue
+    start_time = asyncio.get_event_loop().time()
     logger.info(f"📥 [API] 收到用户消息，会话ID={session_id}，用户={user_id}，消息长度={len(message)} 字符")
+    logger.info(f"⏱️ [超时配置] HTTP超时={settings.http_timeout}s, Keep-alive={settings.keep_alive_timeout}s")
+    if skill_id:
+        logger.info(f"🎯 [Skill] Skill激活: skill_id={skill_id}, mode={invocation_mode or settings.skill_invocation_mode}")
     event_queue = SSEEventQueue()
     await emit_trace_event(
         event_queue,
@@ -201,6 +206,26 @@ async def _run_agent_stream(
         _execute_agent(agent, message, config, event_queue, user_id, tools_logger, sse_logger)
     )
 
+    # Timeout monitoring task
+    timeout_seconds = settings.http_timeout
+    logger.info(f"⏱️ [超时监控] 启动超时监控任务，超时阈值={timeout_seconds}s")
+
+    async def timeout_monitor():
+        try:
+            await asyncio.wait_for(agent_task, timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.error(f"⏰ [超时] Agent执行超时！阈值={timeout_seconds}s，会话ID={session_id}")
+            await event_queue.put((
+                "error",
+                {"message": f"请求超时（{timeout_seconds}s），请稍后重试或检查后端日志"}
+            ))
+            if not agent_task.done():
+                agent_task.cancel()
+                logger.warning("⚠️ [超时] 已取消超时的agent_task")
+
+    # Start timeout monitor in background
+    timeout_task = asyncio.create_task(timeout_monitor())
+
     # Stream events
     logger.info("📡 [SSE] 开始推送 SSE 事件流给前端...")
     _thought_logged = False
@@ -223,7 +248,8 @@ async def _run_agent_stream(
 
             # Check if agent is done
             if event_type == "done":
-                logger.info("🏁 [SSE] 收到 done 事件，流式响应结束")
+                elapsed = asyncio.get_event_loop().time() - start_time
+                logger.info(f"🏁 [SSE] 收到 done 事件，流式响应结束，耗时={elapsed:.2f}s")
                 api_logger.api_sse_stream_end(
                     session_id=session_id,
                     total_events=data.get("total_tokens", 0),
@@ -243,7 +269,8 @@ async def _run_agent_stream(
                 break  # Fix A: error must exit the loop, not hang
 
     except Exception as e:
-        logger.error(f"❌ [SSE] SSE 流发生异常: {e}")
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.error(f"❌ [SSE] SSE 流发生异常: {e}，耗时={elapsed:.2f}s")
         yield await _format_sse_event("error", {"message": str(e)})
         api_logger.api_request_error(
             session_id=session_id,
@@ -253,8 +280,16 @@ async def _run_agent_stream(
         )
     finally:
         # Fix E: cancel background task if SSE exits before agent finishes
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.info(f"🧹 [SSE] finally块执行，总耗时={elapsed:.2f}s，agent_task.done={agent_task.done()}")
+
         if not agent_task.done():
+            logger.warning(f"⚠️ [SSE] SSE提前退出，取消agent_task")
             agent_task.cancel()
+
+        if not timeout_task.done():
+            logger.debug(f"🧹 [SSE] 取消timeout_task")
+            timeout_task.cancel()
 
 
 async def _execute_agent(
@@ -278,12 +313,14 @@ async def _execute_agent(
         sse_logger: SseLogger for SSE event logging
     """
     # Prepare input
+    execution_start = asyncio.get_event_loop().time()
     logger.info(f"🤔 [Agent] _execute_agent 开始执行，用户消息: '{message[:50]}{'...' if len(message) > 50 else ''}'")
     messages_input = [HumanMessage(content=message)]
 
     seq = 0  # Event sequence counter
     final_answer = ""  # Accumulate streaming text for done payload
     interrupted = False  # Track if HIL interrupt occurred
+    llm_call_start = None  # Track LLM call timing
 
     try:
         logger.info("🔄 [Agent] _execute_agent - agent.astream 循环，等待 LLM 响应...")
@@ -293,14 +330,25 @@ async def _execute_agent(
             context=AgentContext(sse_queue=event_queue, user_id=user_id),
             stream_mode=["messages", "updates"],
         ):
+            elapsed_since_start = asyncio.get_event_loop().time() - execution_start
             mode = chunk[0]
             data = chunk[1]
+
+            # 超时警告：如果执行时间超过配置超时的50%
+            if elapsed_since_start > settings.http_timeout * 0.5 and seq == 0:
+                logger.warning(f"⏱️ [超时警告] 执行时间已过半 ({elapsed_since_start:.1f}s / {settings.http_timeout}s)，但尚未收到任何事件")
             if mode == "messages":  # messages mode
                 # Process AIMessageChunk
                 token, metadata = data
 
                 if isinstance(token, AIMessageChunk):
                     if token.text:
+                        # 第一次收到文本时，记录 LLM 响应延迟
+                        if llm_call_start is None:
+                            llm_call_start = asyncio.get_event_loop().time()
+                            llm_latency = llm_call_start - execution_start
+                            logger.info(f"🤖 [Agent] LLM首次响应，延迟={llm_latency:.2f}s")
+
                         seq += 1
                         final_answer += token.text
                          # debug 级别避免刷屏
@@ -321,6 +369,7 @@ async def _execute_agent(
                     if token.tool_call_chunks:
                         # Fix D: tool_call_chunks are streaming fragments.
                         # Only emit tool_start on the first chunk that carries the name.
+                        tool_call_start_time = asyncio.get_event_loop().time()
                         for tool_call_chunk in token.tool_call_chunks:
                             tool_name = tool_call_chunk.get("name", "")
                             if not tool_name:
@@ -329,7 +378,7 @@ async def _execute_agent(
                             seq += 1
                             args = tool_call_chunk.get("args", {})
 
-                            logger.info(f"🔧 [Agent] LLM 决定调用工具: {tool_name}，参数: {str(args)[:80]}")
+                            logger.info(f"🔧 [Agent] LLM 决定调用工具: {tool_name}，参数: {str(args)[:80]}，执行时间={tool_call_start_time - execution_start:.2f}s")
                             tools_logger.toolnode_execute_tool_start(
                                 tool_name=tool_name,
                                 args=args,
@@ -362,7 +411,8 @@ async def _execute_agent(
                             if isinstance(tool_message, (ToolMessage, AIMessage)):
                                 tool_name = getattr(tool_message, "name", None) or "unknown"
                                 result_preview = str(tool_message.content)[:100]
-                                logger.info(f"📦 [Agent] 工具执行完成，结果长度={len(str(tool_message.content))} 字符，预览: '{result_preview}...'")
+                                tool_elapsed = asyncio.get_event_loop().time() - execution_start
+                                logger.info(f"📦 [Agent] 工具执行完成，工具={tool_name}，结果长度={len(str(tool_message.content))} 字符，总耗时={tool_elapsed:.2f}s，预览: '{result_preview}...'")
                                 tools_logger.toolnode_execute_tool_end(
                                     tool_name=tool_name,
                                     result_length=len(str(tool_message.content)),
@@ -412,7 +462,8 @@ async def _execute_agent(
         # After astream loop completes — emit done unless interrupted
         # NOTE: LangGraph updates mode uses node names ("agent", "tools") as sources,
         # never "end". Done must be emitted here after the stream exhausts.
-        logger.info(f"✅ [Agent] astream 循环结束，interrupted={interrupted}，最终回答长度={len(final_answer)} 字符")
+        total_elapsed = asyncio.get_event_loop().time() - execution_start
+        logger.info(f"✅ [Agent] astream 循环结束，interrupted={interrupted}，最终回答长度={len(final_answer)} 字符，总耗时={total_elapsed:.2f}s")
         if not interrupted:
             # Fetch final state messages to populate UI metadata panel
             state_messages: list[dict[str, Any]] = []
@@ -462,7 +513,8 @@ async def _execute_agent(
             ))
 
     except Exception as e:
-        logger.error(f"❌ [Agent] 执行过程中发生异常: {e}")
+        error_elapsed = asyncio.get_event_loop().time() - execution_start
+        logger.error(f"❌ [Agent] 执行过程中发生异常: {e}，耗时={error_elapsed:.2f}s")
         # Push error event
         await event_queue.put((
             "error",
@@ -529,6 +581,7 @@ async def chat(
             session_id=session_id,
             user_id=user_id,
             skill_id=skill_id,
+            invocation_mode=invocation_mode,
             api_logger=api_logger,
             tools_logger=tools_logger,
             sse_logger=sse_logger,
