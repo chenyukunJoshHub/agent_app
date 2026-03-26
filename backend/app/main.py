@@ -3,6 +3,7 @@ FastAPI Application Entry Point.
 
 Multi-Tool AI Agent Backend API.
 """
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,11 +12,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+# 配置 loguru：移除默认处理器，添加 DEBUG 级别的彩色输出
+logger.remove()
+logger.add(
+    sys.stderr,
+    level="DEBUG",
+    format=(
+        "<green>{time:HH:mm:ss.SSS}</green> | "
+        "<level>{level: <7}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    ),
+    colorize=True,
+)
+
 from app.api.chat import router as chat_router
 from app.api.context import router as context_router
+from app.api.preferences import router as preferences_router
 from app.api.skills import router as skills_router
 from app.config import settings
 from app.db.postgres import close_db, init_db
+from pathlib import Path
+from app.skills.manager import SkillManager
 
 
 @asynccontextmanager
@@ -26,30 +44,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Handles startup and shutdown events.
     """
     # Startup
-    logger.info("Starting Multi-Tool AI Agent backend...")
-    logger.info(f"Environment: {settings.environment}")
-    logger.info(f"LLM Provider: {settings.llm_provider}")
+    logger.info("🚀 [启动] Multi-Tool AI Agent 后端启动中...")
+    logger.info(f"🔧 [配置] 运行环境: {settings.environment}")
+    logger.info(f"🤖 [配置] LLM 提供商: {settings.llm_provider}")
 
-    try:
-        # Initialize database
-        await init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-        # Don't fail startup, log and continue
-        # (allows running without DB for testing)
+    # Initialize database — failure here is fatal (checkpointer/store are required)
+    logger.debug("💾 [数据库] 正在初始化数据库连接...")
+    await init_db()
+    logger.info("✅ [数据库] 数据库初始化成功")
 
+    # Initialize SkillManager singleton
+    logger.debug("📚 [技能] 正在初始化 SkillManager...")
+    skills_dir = Path(settings.skills_dir).expanduser().resolve()
+    SkillManager.get_instance(skills_dir=str(skills_dir))
+    logger.info(f"✅ [技能] SkillManager 初始化完成，目录: {skills_dir}")
+
+    logger.info("✅ [启动] 服务器就绪，开始监听请求")
     yield
 
     # Shutdown
-    logger.info("Shutting down...")
+    logger.info("🛑 [关闭] 正在关闭服务器...")
     try:
         await close_db()
-        logger.info("Database connections closed")
+        logger.info("✅ [关闭] 数据库连接已关闭")
     except Exception as e:
-        logger.error(f"Error closing database: {e}")
+        logger.error(f"❌ [关闭] 关闭数据库时出错: {e}")
 
-    logger.info("Shutdown complete")
+    logger.info("✅ [关闭] 服务器已完全关闭")
 
 
 # Create FastAPI app
@@ -125,6 +146,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # Include routers
 app.include_router(chat_router)
 app.include_router(skills_router)
+app.include_router(preferences_router)
 app.include_router(context_router)
 
 

@@ -54,17 +54,18 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 # Dependency to get SkillManager singleton
 def get_skill_manager() -> SkillManager:
     """
-    Get or create SkillManager singleton.
+    Get SkillManager singleton. Depends on lifespan initialization in main.py.
 
     Returns:
         SkillManager instance
-    """
-    # For now, create a new instance each time
-    # In production, this should be a singleton managed by the app lifecycle
-    from app.config import settings
 
-    skills_dir = getattr(settings, "skills_dir", "skills")
-    return SkillManager(skills_dir=skills_dir)
+    Raises:
+        HTTPException: 503 if SkillManager not initialized
+    """
+    try:
+        return SkillManager.get_instance()
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=f"SkillManager not initialized: {e}")
 
 
 @router.get("/", response_model=SkillsListResponse)
