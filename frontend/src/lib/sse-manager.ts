@@ -20,6 +20,7 @@ const EVENT_TYPES: SSEEventType[] = [
   'slot_details',
   'slot_update',
   'session_metadata',
+  'skill_invoked',
   'error',
   'done',
 ];
@@ -37,6 +38,7 @@ export type SSEEventType =
   | 'slot_details'
   | 'slot_update'
   | 'session_metadata'
+  | 'skill_invoked'
   | 'error'
   | 'done';
 

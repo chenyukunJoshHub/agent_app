@@ -130,7 +130,11 @@ export default function HomePage() {
     }
   };
 
-  const handleSendMessage = async (message: string) => {
+  const handleSendMessage = async (
+    message: string,
+    skillId?: string | null,
+    mode?: string | null
+  ) => {
     addMessage({ role: 'user', content: message });
     incrementTurn();
     // Reset context data for the new turn (fixes real-time refresh bug)
@@ -149,6 +153,8 @@ export default function HomePage() {
         message,
         session_id: sessionId,
         user_id: userId,
+        ...(skillId ? { skill_id: skillId } : {}),
+        ...(mode ? { invocation_mode: mode } : {}),
       });
 
       clearLoadTimeout();
@@ -179,6 +185,41 @@ export default function HomePage() {
           setContextWindowData(data as any);
         });
 
+        sseManager.on('slot_update', ({ data }) => {
+          const updated = data as {
+            name: string;
+            display_name: string;
+            tokens: number;
+            enabled: boolean;
+          };
+          // 合并单个 slot 到 slotDetails
+          const currentSlots = useSession.getState().slotDetails;
+          const oldTokens = currentSlots.find((s) => s.name === updated.name)?.tokens ?? 0;
+          const merged = currentSlots.filter((s) => s.name !== updated.name);
+          merged.push({ ...updated, content: '' });
+          setSlotDetails(merged);
+          // 同步更新 contextWindowData 的 total_used / total_remaining / slotUsage
+          const ctx = useSession.getState().contextWindowData;
+          if (ctx) {
+            const delta = updated.tokens - oldTokens;
+            const updatedSlotUsage = ctx.slotUsage.map((s) =>
+              s.name === updated.name ? { ...s, used: updated.tokens } : s
+            );
+            setContextWindowData({
+              ...ctx,
+              slotUsage: updatedSlotUsage,
+              budget: {
+                ...ctx.budget,
+                usage: {
+                  ...ctx.budget.usage,
+                  total_used: ctx.budget.usage.total_used + delta,
+                  total_remaining: Math.max(0, ctx.budget.usage.total_remaining - delta),
+                },
+              },
+            });
+          }
+        });
+
         sseManager.on('session_metadata', ({ data }) => {
           setSessionMeta(data as SessionMeta);
         });
@@ -190,7 +231,7 @@ export default function HomePage() {
           const lastMsg = sessionState.messages[sessionState.messages.length - 1];
 
           if (lastMsg && lastMsg.role === 'assistant') {
-            const text = lastMsg.content ? `${lastMsg.content}\n${content}` : content;
+            const text = lastMsg.content ? `${lastMsg.content}${content}` : content;
             const updatedMsg = { ...lastMsg, content: text };
             useSession.setState({
               messages: [...sessionState.messages.slice(0, -1), updatedMsg],
@@ -251,6 +292,15 @@ export default function HomePage() {
             }
           }
 
+          // 兜底：若流式 thought 事件未产生任何 assistant 消息，用 done.answer 补全
+          if (payload.answer) {
+            const { messages: frontendMsgs } = useSession.getState();
+            const lastMsg = frontendMsgs[frontendMsgs.length - 1];
+            if (!lastMsg || lastMsg.role !== 'assistant') {
+              addMessage({ role: 'assistant', content: payload.answer });
+            }
+          }
+
           // 记录 Turn 完成状态（供 ExecutionTracePanel badge 使用）
           const turnId = useSession.getState().currentTurnId;
           if (turnId) {
@@ -275,9 +325,20 @@ export default function HomePage() {
           setError(message);
           setLoading(false);
           sseManager.disconnect();
-        });
-      }
-    } catch (error) {
+         });
+       }
+
+       sseManager.on('skill_invoked', ({ data }) => {
+         const { skill_id, description } = data as { skill_id: string; description: string };
+         const currentSlots = useSession.getState().slotDetails;
+         const updated = currentSlots.map((s) =>
+           s.name === 'skill_registry'
+             ? { ...s, content: `[手动激活] ${skill_id}: ${description}` }
+             : s
+         );
+         setSlotDetails(updated);
+       });
+     } catch (error) {
       clearLoadTimeout();
       setError(error instanceof Error ? error.message : '发送消息失败');
       setLoading(false);
