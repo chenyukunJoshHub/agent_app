@@ -112,3 +112,82 @@ class TestProceduralProcessor:
         assert "步骤A1" in result
         assert "流程B" in result
         assert "步骤B1" in result
+
+
+class TestMemoryManagerWithProcessors:
+    """Tests for MemoryManager processors integration."""
+
+    def test_default_processors_include_episodic_and_procedural(self):
+        """默认 processors 应包含 EpisodicProcessor 和 ProceduralProcessor"""
+        from unittest.mock import MagicMock
+        from app.memory.processors import EpisodicProcessor, ProceduralProcessor
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        slot_names = [p.slot_name for p in mm.processors]
+        assert "episodic" in slot_names
+        assert "procedural" in slot_names
+
+    def test_custom_processor_is_used_in_build_injection_parts(self):
+        """注入自定义 processor 时，build_injection_parts 应包含其 slot"""
+        from unittest.mock import MagicMock
+        from app.memory.processors import BaseInjectionProcessor
+        from app.memory.manager import MemoryManager
+
+        class DummyProcessor(BaseInjectionProcessor):
+            slot_name = "dummy"
+            display_name = "Dummy"
+            def build_prompt(self, ctx):
+                return "dummy-text"
+
+        mm = MemoryManager(store=MagicMock(), processors=[DummyProcessor()])
+        parts = mm.build_injection_parts(MemoryContext())
+        assert "dummy" in parts
+        assert parts["dummy"] == "dummy-text"
+
+    def test_build_injection_parts_episodic_with_preferences(self):
+        """有 preferences 时 episodic key 应有内容"""
+        from unittest.mock import MagicMock
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        ctx = MemoryContext(episodic=UserProfile(preferences={"domain": "legal-tech"}))
+        parts = mm.build_injection_parts(ctx)
+        assert "episodic" in parts
+        assert "legal-tech" in parts["episodic"]
+
+    def test_build_injection_parts_procedural_with_workflows(self):
+        """有 workflows 时 procedural key 应有内容"""
+        from unittest.mock import MagicMock
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        ctx = MemoryContext(
+            procedural=ProceduralMemory(workflows={"流程A": "步骤1"})
+        )
+        parts = mm.build_injection_parts(ctx)
+        assert "procedural" in parts
+        assert "流程A" in parts["procedural"]
+
+    def test_build_injection_parts_both_empty(self):
+        """两者都空时，所有 value 应为空字符串"""
+        from unittest.mock import MagicMock
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        parts = mm.build_injection_parts(MemoryContext())
+        assert all(v == "" for v in parts.values())
+
+    def test_injection_order_episodic_before_procedural(self):
+        """默认 processors 顺序应保证 episodic 排在 procedural 之前"""
+        from unittest.mock import MagicMock
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        slot_names = [p.slot_name for p in mm.processors]
+        assert slot_names.index("episodic") < slot_names.index("procedural")
+
+    def test_build_ephemeral_prompt_deprecated_wrapper_still_works(self):
+        """build_ephemeral_prompt 保留为兼容 wrapper，功能不变"""
+        from unittest.mock import MagicMock
+        from app.memory.manager import MemoryManager
+        mm = MemoryManager(store=MagicMock())
+        ctx = MemoryContext(episodic=UserProfile(preferences={"lang": "zh"}))
+        result = mm.build_ephemeral_prompt(ctx)
+        assert "[用户画像]" in result
+        assert "lang: zh" in result

@@ -2,6 +2,11 @@
 
 from langgraph.store.postgres import AsyncPostgresStore
 
+from app.memory.processors import (
+    BaseInjectionProcessor,
+    EpisodicProcessor,
+    ProceduralProcessor,
+)
 from app.memory.schemas import EpisodicData, MemoryContext, UserProfile
 
 
@@ -18,13 +23,21 @@ class MemoryManager:
     - Implement preference extraction from interactions
     """
 
-    def __init__(self, store: AsyncPostgresStore) -> None:
+    def __init__(
+        self,
+        store: AsyncPostgresStore,
+        processors: list[BaseInjectionProcessor] | None = None,
+    ) -> None:
         """Initialize MemoryManager.
 
         Args:
             store: AsyncPostgresStore instance for long-term memory
+            processors: Injection processors in injection order.
+                Defaults to [EpisodicProcessor(), ProceduralProcessor()].
+                Pass a custom list to add or replace processors.
         """
         self.store = store
+        self.processors = processors or [EpisodicProcessor(), ProceduralProcessor()]
 
     async def load_episodic(self, user_id: str) -> UserProfile:
         """Load user profile from store.
@@ -47,31 +60,63 @@ class MemoryManager:
     async def save_episodic(self, user_id: str, data: UserProfile) -> None:
         """Save user profile to store.
 
-        P0: No-op (stub implementation).
-
         Args:
             user_id: User identifier
             data: UserProfile to save
         """
-        # P0: Don't write to store yet
-        pass
+        data.user_id = user_id
+        await self.store.aput(
+            namespace=("profile", user_id),
+            key="episodic",
+            value=data.model_dump(),
+        )
 
     def build_ephemeral_prompt(self, ctx: MemoryContext) -> str:
-        """Build ephemeral injection text for System Prompt.
+        """Build episodic injection text (deprecated — use build_injection_parts).
 
-        Per architecture doc §2.4 and §1.4 Ephemeral strategy.
+        Kept for backward compatibility with existing tests.
+        Delegates to EpisodicProcessor.
+        """
+        return EpisodicProcessor().build_prompt(ctx)
 
-        Args:
-            ctx: MemoryContext containing user profile
+    def build_injection_parts(self, ctx: MemoryContext) -> dict[str, str]:
+        """Iterate all injection processors, returning {slot_name: text}.
+
+        Order is determined by self.processors list order (affects injection order).
+        To add a new memory type, register a new processor — no changes needed here.
 
         Returns:
-            str: Injection text (empty if no preferences)
+            dict[str, str]: slot_name → injection text (may be "" if nothing to inject)
         """
-        if not ctx.episodic.preferences:
-            return ""
+        return {p.slot_name: p.build_prompt(ctx) for p in self.processors}
 
-        lines = [f"  {k}: {v}" for k, v in ctx.episodic.preferences.items()]
-        return "\n\n[用户画像]\n" + "\n".join(lines)
+    async def load_procedural(self, user_id: str) -> dict:
+        """Load procedural memory from store.
+
+        Namespace: ("profile", user_id), Key: "procedural".
+
+        Returns:
+            dict: {workflows: {name: instruction, ...}} or empty dict
+        """
+        item = await self.store.aget(
+            namespace=("profile", user_id), key="procedural"
+        )
+        return item.value if item is not None else {}
+
+    async def save_procedural(self, user_id: str, data: dict) -> None:
+        """Save procedural memory to store (merge semantics).
+
+        Args:
+            user_id: User identifier
+            data: Procedural record dict to merge into existing data
+        """
+        existing = await self.load_procedural(user_id)
+        existing.update(data)
+        await self.store.aput(
+            namespace=("profile", user_id),
+            key="procedural",
+            value=existing,
+        )
 
     # ----- Legacy methods (deprecated, kept for compatibility) -----
 
