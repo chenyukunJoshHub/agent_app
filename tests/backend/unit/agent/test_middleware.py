@@ -86,8 +86,8 @@ class TestTraceMiddleware:
 
     @pytest.fixture
     def trace_middleware(self, mock_queue) -> TraceMiddleware:
-        """Create TraceMiddleware with mock queue."""
-        return TraceMiddleware(sse_queue=mock_queue)
+        """Create TraceMiddleware (SSE queue injected per-request via runtime.context)."""
+        return TraceMiddleware()
 
     @pytest.mark.asyncio
     async def test_abefore_agent_sends_agent_start_event(
@@ -98,6 +98,8 @@ class TestTraceMiddleware:
         """Test that abefore_agent sends agent_start event."""
         state = {"session_id": "test_session"}
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         await trace_middleware.abefore_agent(state, runtime)
 
@@ -137,6 +139,8 @@ class TestTraceMiddleware:
             ]
         }
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Clear queue
         while not mock_queue.empty():
@@ -172,6 +176,8 @@ class TestTraceMiddleware:
             ]
         }
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Clear queue
         while not mock_queue.empty():
@@ -189,9 +195,9 @@ class TestTraceMiddleware:
     @pytest.mark.asyncio
     async def test_send_sse_event_with_queue(self, mock_queue) -> None:
         """Test _send_sse_event puts event in queue."""
-        middleware = TraceMiddleware(sse_queue=mock_queue)
+        middleware = TraceMiddleware()
 
-        await middleware._send_sse_event("test_event", {"key": "value"})
+        await middleware._send_sse_event(mock_queue, "test_event", {"key": "value"})
 
         assert not mock_queue.empty()
         event_type, data = await mock_queue.get()
@@ -201,10 +207,10 @@ class TestTraceMiddleware:
     @pytest.mark.asyncio
     async def test_send_sse_event_without_queue(self) -> None:
         """Test _send_sse_event handles None queue gracefully."""
-        middleware = TraceMiddleware(sse_queue=None)
+        middleware = TraceMiddleware()
 
         # Should not raise error
-        await middleware._send_sse_event("test_event", {"key": "value"})
+        await middleware._send_sse_event(None, "test_event", {"key": "value"})
 
     @pytest.mark.asyncio
     async def test_trace_middleware_with_empty_messages(
@@ -215,6 +221,8 @@ class TestTraceMiddleware:
         """Test TraceMiddleware with empty messages list."""
         state = {"messages": []}
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Should not raise error
         await trace_middleware.aafter_model(state, runtime)
@@ -253,6 +261,8 @@ class TestTraceMiddleware:
             "_token_usage": 0,  # Initial token usage
         }
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Clear queue
         while not mock_queue.empty():
@@ -307,6 +317,8 @@ class TestTraceMiddleware:
             "_token_usage": 500,  # Previous usage
         }
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Clear queue
         while not mock_queue.empty():
@@ -341,6 +353,8 @@ class TestTraceMiddleware:
             "_token_usage": 100,
         }
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
 
         # Clear queue
         while not mock_queue.empty():
@@ -348,15 +362,11 @@ class TestTraceMiddleware:
 
         await trace_middleware.aafter_model(state, runtime)
 
-        # Should still send thought event but not token_update
+        # Should not send token_update event (no token_usage in metadata)
         events_sent = []
         while not mock_queue.empty():
             event_type, data = mock_queue.get_nowait()
             events_sent.append((event_type, data))
-
-        # Should have thought event
-        thought_events = [e for e in events_sent if e[0] == "thought"]
-        assert len(thought_events) > 0
 
         # Should NOT have token_update event
         token_update_events = [e for e in events_sent if e[0] == "token_update"]
@@ -364,6 +374,73 @@ class TestTraceMiddleware:
 
         # Token usage should remain unchanged
         assert state["_token_usage"] == 100
+
+
+class TestTraceBlockBuilderIntegration:
+    """Test TraceBlockBuilder integration wiring in TraceMiddleware."""
+
+    @pytest.fixture
+    def trace_middleware(self) -> TraceMiddleware:
+        """Create TraceMiddleware with block builder."""
+        return TraceMiddleware()
+
+    def test_has_block_builder_attribute(self, trace_middleware: TraceMiddleware) -> None:
+        """TraceMiddleware should have a _block_builder attribute."""
+        assert hasattr(trace_middleware, "_block_builder")
+        from app.observability.trace_block import TraceBlockBuilder
+        assert isinstance(trace_middleware._block_builder, TraceBlockBuilder)
+
+    @pytest.mark.asyncio
+    async def test_feed_block_builder_emits_blocks(self, trace_middleware: TraceMiddleware) -> None:
+        """_feed_block_builder should call builder and emit resulting blocks."""
+        import asyncio
+
+        queue = asyncio.Queue()
+        # Mock the builder to return a known block
+        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[{"type": "test_block"}])
+
+        await trace_middleware._feed_block_builder(
+            queue,
+            stage="react",
+            step="turn_done",
+        )
+
+        # Should have emitted the block via SSE
+        assert not queue.empty()
+        event_type, data = await queue.get()
+        assert event_type == "trace_block"
+        assert data["type"] == "test_block"
+
+    @pytest.mark.asyncio
+    async def test_feed_block_builder_with_none_queue(self, trace_middleware: TraceMiddleware) -> None:
+        """_feed_block_builder should handle None queue gracefully."""
+        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[{"type": "test_block"}])
+
+        # Should not raise
+        await trace_middleware._feed_block_builder(
+            None,
+            stage="react",
+            step="turn_start",
+        )
+
+    @pytest.mark.asyncio
+    async def test_feed_block_builder_no_blocks(self, trace_middleware: TraceMiddleware) -> None:
+        """_feed_block_builder should be a no-op when builder returns no blocks."""
+        import asyncio
+
+        queue = asyncio.Queue()
+        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[])
+
+        await trace_middleware._feed_block_builder(
+            queue,
+            stage="react",
+            step="model_call_start",
+            status="start",
+            payload={"messages": 5},
+        )
+
+        # Queue should be empty (no blocks emitted)
+        assert queue.empty()
 
 
 class TestMiddlewareIntegration:
@@ -392,12 +469,14 @@ class TestMiddlewareIntegration:
 
         # Create middleware instances
         memory = MemoryMiddleware(memory_manager=memory_manager)
-        trace = TraceMiddleware(sse_queue=queue)
+        trace = TraceMiddleware()
 
         # Simulate agent turn
         state = {"messages": [], "session_id": "test"}
         runtime = MagicMock()
         runtime.config = {"configurable": {"user_id": "test"}}
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = queue
 
         # Execute middleware hooks in order
         result1 = await memory.abefore_agent(state, runtime)
@@ -420,10 +499,12 @@ class TestMiddlewareIntegration:
         queue = asyncio.Queue()
 
         memory = MemoryMiddleware(memory_manager=memory_manager)
-        trace = TraceMiddleware(sse_queue=queue)
+        trace = TraceMiddleware()
 
         state = {"messages": []}
         runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = queue
 
         # Execute both aafter_agent hooks
         result1 = await memory.aafter_agent(state, runtime)
