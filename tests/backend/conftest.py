@@ -27,9 +27,8 @@ sys.path.insert(0, str(backend_root.resolve()))
 os.environ["LLM_PROVIDER"] = "ollama"
 os.environ["OLLAMA_BASE_URL"] = "http://localhost:11434"
 os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
-# 设置 skills_dir 为项目根目录下的 skills 文件夹
-project_root = Path(__file__).resolve().parent.parent.parent
-os.environ["SKILLS_DIR"] = str(project_root / "skills")
+# 设置 skills_dir 为 ~/.agents/skills（新的默认值）
+os.environ["SKILLS_DIR"] = "~/.agents/skills"
 
 from app.config import Settings
 from app.main import app

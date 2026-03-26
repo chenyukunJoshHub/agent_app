@@ -76,8 +76,8 @@ class TestSettings:
         )
         assert s.llm_provider == LLMProvider.OPENAI
         assert s.openai_api_key == "test_key"
-        # Default is OpenAI's official URL
-        assert s.openai_base_url == "https://api.openai.com/v1"
+        # Default is DeepSeek-compatible URL (used as OpenAI-compatible endpoint)
+        assert s.openai_base_url == "https://api.deepseek.com/v1"
 
     def test_temperature_validation(self) -> None:
         """Test temperature range validation (0.0 to 2.0)."""
@@ -154,6 +154,21 @@ class TestSettingsSingleton:
         s1_copy = get_settings()
         assert s1.llm_provider == s1_copy.llm_provider
         assert s1.database_url == s1_copy.database_url
+
+
+    def test_skill_invocation_mode_default(self) -> None:
+        """skill_invocation_mode 默认值应为 'hint'"""
+        s = _TestSettings()
+        assert s.skill_invocation_mode == "hint"
+
+
+    def test_skills_dir_default_is_agents_skills(self) -> None:
+        """skills_dir 默认值应指向 ~/.agents/skills 或项目内的 skills 目录"""
+        s = _TestSettings()
+        from pathlib import Path
+        expected_unexpanded = "~/.agents/skills"
+        # 检查是否是预期的值之一
+        assert s.skills_dir in [expected_unexpanded, str(Path(expected_unexpanded).expanduser().resolve())]
 
 
 class TestEnvironmentVariableLoading:

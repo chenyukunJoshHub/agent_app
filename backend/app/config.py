@@ -162,8 +162,20 @@ class Settings(BaseSettings):
 
     # Skills Directory
     skills_dir: str = Field(
-        default="../skills",
-        description="Directory containing Agent Skill definitions (SKILL.md files). Can be absolute or relative path.",
+        default="~/.agents/skills",
+        description="Skills 目录路径（支持 ~ 展开）。原默认值为 ../skills，升级时请确认 .env 配置。",
+    )
+
+    # Skill Invocation Mode
+    skill_invocation_mode: Literal["hint", "force"] = Field(
+        default="hint",
+        description="skill 调用模式：hint（软提示引导 LLM）| force（强制注入，待开发）",
+    )
+
+    # Workspace / project root — relative paths in read_file resolve against this
+    workspace_dir: str = Field(
+        default="",
+        description="Project root directory for resolving relative file paths. Defaults to parent of backend/.",
     )
 
     # Application
@@ -196,6 +208,58 @@ class Settings(BaseSettings):
     allowed_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
         description="Comma-separated list of allowed CORS origins",
+    )
+
+    # Token Budget Configuration
+    token_model_context_window: int = Field(
+        default=200_000,
+        description="Model context window size (tokens)",
+    )
+    token_working_budget: int = Field(
+        default=32_768,
+        description="Agent working budget (tokens)",
+    )
+    token_max_output: int = Field(
+        default=8_192,
+        description="Standard output max tokens",
+    )
+    token_slot_output: int = Field(
+        default=8_192,
+        description="Output reserve slot (tokens)",
+    )
+    token_slot_system: int = Field(
+        default=2_000,
+        description="System Prompt + Few-shot slot (tokens)",
+    )
+    token_slot_active_skill: int = Field(
+        default=0,
+        description="Active Skill slot (tokens)",
+    )
+    token_slot_few_shot: int = Field(
+        default=0,
+        description="Few-shot slot (tokens)",
+    )
+    token_slot_rag: int = Field(
+        default=0,
+        description="RAG background knowledge slot (tokens)",
+    )
+    token_slot_episodic: int = Field(
+        default=500,
+        description="Episodic memory slot (tokens)",
+    )
+    token_slot_procedural: int = Field(
+        default=0,
+        description="Procedural memory slot (tokens)",
+    )
+    token_slot_tools: int = Field(
+        default=1_200,
+        description="Tools schema slot (tokens)",
+    )
+    token_autocompact_buffer_ratio: float = Field(
+        default=0.165,
+        ge=0.0,
+        le=1.0,
+        description="Reserved buffer ratio before auto-compaction",
     )
 
     @field_validator("allowed_origins")
