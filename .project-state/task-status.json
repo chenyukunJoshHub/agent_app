@@ -1,52 +1,18 @@
 {
-  "total_tasks": 6,
-  "completed_tasks": 0,
+  "total_tasks": 8,
+  "completed_tasks": 8,
   "failed_tasks": 0,
   "blocked_tasks": 0,
-  "in_progress_tasks": 1,
-  "pending_tasks": 5,
+  "in_progress_tasks": 0,
+  "pending_tasks": 0,
   "tasks": [
-    {
-      "id": "1.1",
-      "name": "项目脚手架",
-      "status": "in_progress",
-      "phase": "Phase 1",
-      "priority": "P0"
-    },
-    {
-      "id": "1.2",
-      "name": "Docker Compose 配置",
-      "status": "pending",
-      "phase": "Phase 1",
-      "priority": "P0"
-    },
-    {
-      "id": "1.3",
-      "name": "数据库初始化",
-      "status": "pending",
-      "phase": "Phase 1",
-      "priority": "P0"
-    },
-    {
-      "id": "1.4",
-      "name": "LLM Factory",
-      "status": "pending",
-      "phase": "Phase 1",
-      "priority": "P0"
-    },
-    {
-      "id": "1.5",
-      "name": "核心 Tools",
-      "status": "pending",
-      "phase": "Phase 1",
-      "priority": "P0"
-    },
-    {
-      "id": "1.6",
-      "name": "前端基础组件",
-      "status": "pending",
-      "phase": "Phase 1",
-      "priority": "P0"
-    }
+    { "id": "T1", "name": "ToolMeta dataclass", "status": "completed", "phase": "Phase 14+", "priority": "P0" },
+    { "id": "T2", "name": "activate_skill 工具", "status": "completed", "phase": "Phase 14+", "priority": "P0" },
+    { "id": "T3", "name": "ToolManager 类", "status": "completed", "phase": "Phase 14+", "priority": "P1" },
+    { "id": "T4", "name": "PolicyEngine 类", "status": "completed", "phase": "Phase 14+", "priority": "P1" },
+    { "id": "T5", "name": "IdempotencyStore 类", "status": "completed", "phase": "Phase 14+", "priority": "P1" },
+    { "id": "T6", "name": "build_tool_registry() 升级", "status": "completed", "phase": "Phase 14+", "priority": "P1" },
+    { "id": "T7", "name": "SSE 工具层 trace 事件", "status": "completed", "phase": "Phase 14+", "priority": "P0" },
+    { "id": "T8", "name": "前端 ToolCallCard 组件", "status": "completed", "phase": "Phase 14+", "priority": "P1" }
   ]
 }
