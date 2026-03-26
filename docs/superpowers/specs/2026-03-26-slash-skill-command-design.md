@@ -79,14 +79,24 @@ skill_invocation_mode: str = Field(
 )
 ```
 
-### 2. `backend/app/api/skills.py`
+### 2. `backend/app/main.py` — 启动时初始化 SkillManager
 
-修复 `get_skill_manager()` 走单例，`skills_dir` 从 `settings.skills_dir` 读取并展开 `~`：
+应用启动时（`lifespan`）统一初始化 SkillManager 单例，确保 skills 元数据从 `~/.agents/skills` 加载，后续所有调用方（`/skills/` API、chat 路由、prompt builder）共享同一实例：
+
+```python
+# lifespan startup
+skills_dir = Path(settings.skills_dir).expanduser().resolve()
+SkillManager.get_instance(skills_dir=str(skills_dir))
+logger.info(f"✅ [技能] SkillManager 初始化完成，目录: {skills_dir}")
+```
+
+### 3. `backend/app/api/skills.py`
+
+修复 `get_skill_manager()` 走单例（初始化已在 `main.py` 完成，此处直接取实例）：
 
 ```python
 def get_skill_manager() -> SkillManager:
-    skills_dir = Path(settings.skills_dir).expanduser().resolve()
-    return SkillManager.get_instance(skills_dir=str(skills_dir))
+    return SkillManager.get_instance()  # 无需再传 skills_dir
 ```
 
 ### 3. `backend/app/api/chat.py`
@@ -200,7 +210,8 @@ const handleSendMessage = async (
 | 操作 | 文件 | 内容 |
 |------|------|------|
 | 修改 | `backend/app/config.py` | 新增 `skills_dir` + `skill_invocation_mode` |
-| 修改 | `backend/app/api/skills.py` | 修复单例，skills_dir 展开 `~` |
+| 修改 | `backend/app/main.py` | lifespan 启动时初始化 SkillManager 单例 |
+| 修改 | `backend/app/api/skills.py` | 修复单例，直接取已初始化实例 |
 | 修改 | `backend/app/api/chat.py` | ChatRequest 加 skill_id + mode，Hint 注入函数 |
 | 新增 | `frontend/src/hooks/useSkillCommand.ts` | skill 列表、过滤、模式状态 |
 | 修改 | `frontend/src/components/ChatInput.tsx` | `/` 命令检测、下拉列表 UI、发送逻辑 |
