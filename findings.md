@@ -5,6 +5,45 @@
 
 ---
 
+## Session Findings (2026-03-25) — Logging System Integration
+
+### 问题
+`backend/app/api/chat.py` 中存在多处语法错误，阻碍了日志系统的进一步集成。
+
+### 查阅章节
+- `docs/logging-design.md` - 日志系统设计文档
+- `docs/logging-implementation-summary.md` - 实现总结
+- `backend/app/logger/modules/api.py` - ApiLogger 接口定义
+- `backend/app/logger/modules/tools.py` - ToolsLogger 接口定义
+- `backend/app/logger/modules/sse.py` - SseLogger 接口定义
+
+### 结论
+1. **多 Logger 实例策略**：
+   - 在 `chat.py` 中创建三个独立的 Logger 实例（ApiLogger、ToolsLogger、SseLogger）
+   - 每个 Logger 负责不同层级的日志记录
+   - 通过函数参数传递 Logger 实例，保持清晰的接口
+
+2. **SSE 事件日志分离**：
+   - `ApiLogger` 记录 SSE 流级别的日志（stream_start, event_sent, stream_end）
+   - `SseLogger` 记录具体的事件内容（thought, tool_start, tool_result, hil_interrupt, done）
+   - 这样分离便于后续的日志分析和查询
+
+3. **Logger 参数传递**：
+   - `_run_agent_stream` 函数接收三个 Logger 实例作为参数
+   - `_execute_agent` 函数接收 tools_logger 和 sse_logger 作为参数
+   - 保持函数签名清晰，避免全局状态
+
+### 影响文件
+- `backend/app/api/chat.py` - 完全重写，修复所有语法错误，集成三个 Logger
+
+### 验证结果
+- ✅ 语法检查通过（`python -m py_compile`）
+- ✅ 所有导入正确
+- ✅ Logger 实例正确创建和使用
+- ✅ 代码结构清晰，无重复定义
+
+---
+
 ## Session Findings (2026-03-25) — Context UI Redesign
 
 ### 问题

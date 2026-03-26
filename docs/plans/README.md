@@ -20,18 +20,26 @@
 | 12 | plan-phase12-hil.md | frontend/components/hil/ | Agent v13 §1.13 | ✅ done |
 | 13 | plan-phase13-e2e-tests.md | tests/e2e/ | — | ✅ done |
 | 14 | plan-phase14-slot-token-stats.md | backend/prompt/slot_tracker.py + frontend/ | Prompt v20 §1.2 | ✅ done |
+| 15 | plan-phase15-assistant-ui-redesign.md | frontend/ + assistant-ui | — | 🔄 in progress |
+| 16 | plan-phase16-tool-system-review-fixes.md | backend/tools/ + backend/agent/ + tests/ | Agent v13 §1.12 | ⏳ pending |
 
 ## 当前状态
 
-**最后更新**: 2026-03-23
+**最后更新**: 2026-03-25
 
-**当前阶段**: Phase 14 - Slot Token 实时统计功能 ✅ **COMPLETED**
+**已完成（2026-03-25）**: Context 右侧面板重设计 ✅
+- 计划文件: `docs/superpowers/plans/2026-03-25-context-panel-redesign.md`
+- 4 个新组件（SessionMetadataSection / TokenMapSection / SlotCardsSection / ContextPanel）
+- 修复实时刷新 bug，新增 session_metadata SSE 事件
+- 26 个新测试全部 GREEN
 
-**所有核心功能已完成！** ✅
+**下一阶段**: Phase 16 — 工具系统审查修复 ⏳ **待开始**
+
+**审查来源**: `docs/review/tool-system-review-2026-03-24.md`（36 项发现）
 
 **阻塞项**: 无
 
-**下一阶段**: 生产准备（性能优化、安全加固、CI/CD 配置）
+**下一阶段**: Phase 16.1 → 16.2 → 16.3
 
 ---
 
