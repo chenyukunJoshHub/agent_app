@@ -3,7 +3,9 @@ Unit tests for app.tools.search.
 
 These tests verify the web_search tool functionality.
 """
-import os
+import importlib
+import json
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,11 +33,8 @@ class TestWebSearchTool:
         # Should have 'query' argument
         assert "query" in schema.model_fields
 
+    @pytest.mark.skip(reason="requires valid Tavily API key - integration test")
     @pytest.mark.requires_api_key
-    @pytest.mark.skipif(
-        not os.getenv("TAVILY_API_KEY"),
-        reason="TAVILY_API_KEY not set",
-    )
     @pytest.mark.asyncio
     async def test_web_search_with_valid_query(self) -> None:
         """Test web_search with a valid query."""
@@ -45,22 +44,24 @@ class TestWebSearchTool:
         assert result is not None
         assert isinstance(result, str)
 
-        # Should be JSON
-        import json
-
         data = json.loads(result)
         assert "query" in data
         assert "results" in data
 
-    def test_web_search_missing_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_web_search_missing_api_key(self) -> None:
         """Test web_search returns error when API key is missing."""
-        monkeypatch.setenv("TAVILY_API_KEY", "")
+        from unittest.mock import patch
+        import app.config
 
-        from app.tools.search import web_search
+        with patch.object(app.config.settings, "tavily_api_key", ""):
+            import sys
+            if "app.tools.search" in sys.modules:
+                del sys.modules["app.tools.search"]
+            from app.tools.search import web_search
 
-        result = web_search.invoke({"query": "test"})
-        assert "错误" in result
-        assert "TAVILY_API_KEY" in result
+            result = web_search.invoke({"query": "test"})
+            assert "错误" in result
+            assert "TAVILY_API_KEY" in result
 
     def test_web_search_success(
         self,
@@ -111,11 +112,11 @@ class TestWebSearchTool:
             mock_client_class.assert_called_once_with(api_key="test_key")
             mock_client.search.assert_called_once()
 
-            import json
-
             data = json.loads(result)
             assert data["query"] == "茅台股价"
             assert len(data["results"]) == 1
+            assert data["ok"] is True
+            assert data["error"] is None
 
     def test_web_search_error_handling(
         self,
@@ -189,8 +190,6 @@ class TestWebSearchTool:
 
             result = web_search.invoke({"query": "test"})
 
-            import json
-
             data = json.loads(result)
             # Should have 5 results (API respects max_results=5)
             assert len(data["results"]) == 5
@@ -234,8 +233,6 @@ class TestWebSearchTool:
 
             result = web_search.invoke({"query": "test"})
 
-            import json
-
             data = json.loads(result)
             assert data["answer"] == "This is the AI-generated answer"
 
@@ -271,7 +268,7 @@ class TestWebSearchEdgeCases:
             # Import web_search AFTER patch is applied and config is reloaded
             from app.tools.search import web_search
 
-            result = web_search.invoke({"query": ""})
+            web_search.invoke({"query": ""})
             # Should still call search (Tavily handles empty queries)
             mock_client.search.assert_called_once()
 
@@ -304,7 +301,7 @@ class TestWebSearchEdgeCases:
             # Import web_search AFTER patch is applied and config is reloaded
             from app.tools.search import web_search
 
-            result = web_search.invoke({"query": "测试！@#$%^&*()"})
+            web_search.invoke({"query": "测试！@#$%^&*()"})
             mock_client.search.assert_called_once()
 
     def test_very_long_query(
@@ -337,9 +334,135 @@ class TestWebSearchEdgeCases:
             from app.tools.search import web_search
 
             long_query = "test " * 1000
-            result = web_search.invoke({"query": long_query})
+            web_search.invoke({"query": long_query})
             mock_client.search.assert_called_once()
 
 
-# Import os
-import os
+class TestWebSearchContract:
+    """Contract tests for consistent JSON output and truncation behavior."""
+
+    @staticmethod
+    def _reload_search_module():
+        import app.config
+
+        app.config._settings = None
+        importlib.reload(app.config)
+
+        if "app.tools.search" in sys.modules:
+            del sys.modules["app.tools.search"]
+        from app.tools.search import web_search
+        return web_search
+
+    def test_success_and_failure_use_parseable_json_contract(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from unittest.mock import patch
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test_key")
+
+        with patch("tavily.TavilyClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.search.return_value = {
+                "answer": "ok",
+                "results": [{"title": "t", "url": "u", "content": "c"}],
+            }
+
+            web_search = self._reload_search_module()
+            success_data = json.loads(web_search.invoke({"query": "ok"}))
+
+            assert set(success_data.keys()) == {"ok", "query", "answer", "results", "error"}
+            assert success_data["ok"] is True
+            assert success_data["error"] is None
+            assert isinstance(success_data["results"], list)
+
+        with patch("tavily.TavilyClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.search.side_effect = TimeoutError("request timeout")
+
+            web_search = self._reload_search_module()
+            failed_data = json.loads(web_search.invoke({"query": "timeout"}))
+
+            assert set(failed_data.keys()) == {"ok", "query", "answer", "results", "error"}
+            assert failed_data["ok"] is False
+            assert failed_data["answer"] == ""
+            assert failed_data["results"] == []
+            assert failed_data["error"]["type"] == "timeout"
+            assert "搜索失败" in failed_data["error"]["message"]
+
+    def test_error_type_mapping_network(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from unittest.mock import patch
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test_key")
+
+        with patch("tavily.TavilyClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.search.side_effect = Exception("network connection reset by peer")
+
+            web_search = self._reload_search_module()
+            data = json.loads(web_search.invoke({"query": "net"}))
+
+            assert data["ok"] is False
+            assert data["error"]["type"] == "network"
+            assert "connection reset" in data["error"]["message"]
+
+    def test_large_result_content_is_truncated(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from unittest.mock import patch
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test_key")
+
+        with patch("tavily.TavilyClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.search.return_value = {
+                "answer": "A" * 4000,
+                "results": [
+                    {"title": "r1", "url": "u1", "content": "B" * 5000},
+                    {"title": "r2", "url": "u2", "content": "C" * 5000},
+                    {"title": "r3", "url": "u3", "content": "D" * 5000},
+                ],
+            }
+
+            web_search = self._reload_search_module()
+            data = json.loads(web_search.invoke({"query": "big"}))
+
+            from app.tools.search import (
+                MAX_ANSWER_CHARS,
+                MAX_RESULT_CONTENT_CHARS,
+                MAX_TOTAL_RESULT_CONTENT_CHARS,
+            )
+
+            assert len(data["answer"]) <= MAX_ANSWER_CHARS
+            assert all(len(item["content"]) <= MAX_RESULT_CONTENT_CHARS for item in data["results"])
+            assert sum(len(item["content"]) for item in data["results"]) <= MAX_TOTAL_RESULT_CONTENT_CHARS
+
+    def test_result_fields_are_always_present(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from unittest.mock import patch
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test_key")
+
+        with patch("tavily.TavilyClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.search.return_value = {
+                "answer": "",
+                "results": [{}],
+            }
+
+            web_search = self._reload_search_module()
+            data = json.loads(web_search.invoke({"query": "shape"}))
+
+            assert data["ok"] is True
+            assert data["results"][0] == {"title": "", "url": "", "content": ""}

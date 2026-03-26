@@ -3,10 +3,10 @@ Unit tests for LangGraph chunk processing in _execute_agent.
 
 These tests verify that astream chunks are correctly parsed and converted to SSE events.
 """
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from app.api.chat import SSEEventQueue, _execute_agent
 
@@ -20,16 +20,13 @@ class TestChunkProcessing:
         mock_agent = MagicMock()
         mock_queue = SSEEventQueue()
 
-        # Simulate LangGraph astream yielding updates
+        # Simulate LangGraph astream yielding updates (stream_mode=["messages","updates"])
         async def mock_stream(*args, **kwargs):
-            # Simulate a messages update chunk
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="I should search for that information.",
-                    )
-                ]
-            }
+            # Simulate an updates chunk from the agent node
+            yield (
+                "updates",
+                {"agent": {"messages": [AIMessage(content="I should search for that information.")]}},
+            )
 
         mock_agent.astream = mock_stream
 
@@ -39,6 +36,9 @@ class TestChunkProcessing:
             "Search for latest AI news",
             {},
             mock_queue,
+            user_id="dev_user",
+            tools_logger=MagicMock(),
+            sse_logger=MagicMock(),
         )
 
         # Verify events were queued
@@ -58,32 +58,21 @@ class TestChunkProcessing:
         mock_agent = MagicMock()
         mock_queue = SSEEventQueue()
 
-        # Simulate chunk with tool call
+        # Simulate chunk with tool call (stream_mode=["messages","updates"])
         async def mock_stream(*args, **kwargs):
-            # AI message with tool calls
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "name": "web_search",
-                                "args": {"query": "test query"},
-                                "id": "call_123",
-                            }
-                        ],
-                    )
-                ]
-            }
-            # Tool result message
-            yield {
-                "messages": [
-                    ToolMessage(
-                        content="Search results found",
-                        tool_call_id="call_123",
-                    )
-                ]
-            }
+            # AI message with tool calls — comes as updates from agent node
+            yield (
+                "updates",
+                {"agent": {"messages": [AIMessage(
+                    content="",
+                    tool_calls=[{"name": "web_search", "args": {"query": "test query"}, "id": "call_123"}],
+                )]}},
+            )
+            # Tool result message — comes as updates from tools node
+            yield (
+                "updates",
+                {"tools": {"messages": [ToolMessage(content="Search results found", tool_call_id="call_123")]}},
+            )
 
         mock_agent.astream = mock_stream
 
@@ -92,6 +81,9 @@ class TestChunkProcessing:
             "Search for something",
             {},
             mock_queue,
+            user_id="dev_user",
+            tools_logger=MagicMock(),
+            sse_logger=MagicMock(),
         )
 
         # Collect events
@@ -113,46 +105,23 @@ class TestChunkProcessing:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            # Chunk 1: Initial thought
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="Let me think about this...",
-                    )
-                ]
-            }
-            # Chunk 2: Tool call
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="I'll search for that.",
-                        tool_calls=[
-                            {
-                                "name": "web_search",
-                                "args": {"query": "test"},
-                                "id": "call_1",
-                            }
-                        ],
-                    )
-                ]
-            }
-            # Chunk 3: Tool result
-            yield {
-                "messages": [
-                    ToolMessage(
-                        content="Result: test data",
-                        tool_call_id="call_1",
-                    )
-                ]
-            }
-            # Chunk 4: Final answer
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="Based on the search, here's the answer.",
-                    )
-                ]
-            }
+            # Chunk 1: Initial thought — updates from agent node
+            yield ("updates", {"agent": {"messages": [AIMessage(content="Let me think about this...")]}})
+            # Chunk 2: Tool call — updates from agent node
+            yield (
+                "updates",
+                {"agent": {"messages": [AIMessage(
+                    content="I'll search for that.",
+                    tool_calls=[{"name": "web_search", "args": {"query": "test"}, "id": "call_1"}],
+                )]}},
+            )
+            # Chunk 3: Tool result — updates from tools node
+            yield (
+                "updates",
+                {"tools": {"messages": [ToolMessage(content="Result: test data", tool_call_id="call_1")]}},
+            )
+            # Chunk 4: Final answer — updates from agent node
+            yield ("updates", {"agent": {"messages": [AIMessage(content="Based on the search, here's the answer.")]}})
 
         mock_agent.astream = mock_stream
 
@@ -161,6 +130,9 @@ class TestChunkProcessing:
             "Test question",
             {},
             mock_queue,
+            user_id="dev_user",
+            tools_logger=MagicMock(),
+            sse_logger=MagicMock(),
         )
 
         # Collect all events
@@ -181,14 +153,12 @@ class TestChunkProcessing:
         mock_agent = MagicMock()
         mock_queue = SSEEventQueue()
 
-        # In 'values' mode, chunks contain full state
+        # In 'updates' mode (LangGraph stream_mode=["messages","updates"])
         async def mock_stream(*args, **kwargs):
-            yield {
-                "messages": [
-                    HumanMessage(content="Test"),
-                    AIMessage(content="Response"),
-                ]
-            }
+            yield (
+                "updates",
+                {"agent": {"messages": [HumanMessage(content="Test"), AIMessage(content="Response")]}},
+            )
 
         mock_agent.astream = mock_stream
 
@@ -197,6 +167,9 @@ class TestChunkProcessing:
             "Test",
             {},
             mock_queue,
+            user_id="dev_user",
+            tools_logger=MagicMock(),
+            sse_logger=MagicMock(),
         )
 
         # Should complete without error
@@ -215,13 +188,14 @@ class TestChunkProcessing:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            yield {}  # Empty chunk
-            yield {"messages": []}  # Empty messages
+            yield ("updates", {})  # Empty updates chunk
+            yield ("updates", {"agent": {"messages": []}})  # Empty messages
 
         mock_agent.astream = mock_stream
 
         # Should not raise
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Should still send done event
         event = await mock_queue.get()
@@ -235,15 +209,12 @@ class TestChunkProcessing:
 
         test_content = "This is the AI's response"
         async def mock_stream(*args, **kwargs):
-            yield {
-                "messages": [
-                    AIMessage(content=test_content),
-                ]
-            }
+            yield ("updates", {"agent": {"messages": [AIMessage(content=test_content)]}})
 
         mock_agent.astream = mock_stream
 
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Collect events
         events = []
@@ -266,15 +237,12 @@ class TestChunkProcessing:
         async def mock_stream(*args, **kwargs):
             # Multiple messages to generate multiple events
             for i in range(3):
-                yield {
-                    "messages": [
-                        AIMessage(content=f"Message {i}"),
-                    ]
-                }
+                yield ("updates", {"agent": {"messages": [AIMessage(content=f"Message {i}")]}})
 
         mock_agent.astream = mock_stream
 
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Collect all events
         events = []
@@ -297,14 +265,15 @@ class TestChunkErrorHandling:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            yield None  # Invalid chunk
-            yield "invalid"  # Wrong type
-            yield {"invalid_key": "value"}  # Missing messages key
+            yield ("unknown_mode", {})  # Unknown mode — should be ignored gracefully
+            yield ("updates", {})  # Empty updates — no sources
+            yield ("updates", {"invalid_key": "value"})  # Source with no messages key
 
         mock_agent.astream = mock_stream
 
         # Should not raise
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Should still send done event
         event = await mock_queue.get()
@@ -317,13 +286,14 @@ class TestChunkErrorHandling:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            yield {"messages": [AIMessage(content="Before error")]}
+            yield ("messages", (AIMessageChunk(content="Before error"), {}))
             raise RuntimeError("Stream error")
 
         mock_agent.astream = mock_stream
 
         # Should handle error gracefully
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Collect all events
         events = []
@@ -348,24 +318,18 @@ class TestToolCallDetection:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="I'll search for that",
-                        tool_calls=[
-                            {
-                                "name": "web_search",
-                                "args": {"query": "test"},
-                                "id": "call_1",
-                            }
-                        ],
-                    )
-                ]
-            }
+            yield (
+                "updates",
+                {"agent": {"messages": [AIMessage(
+                    content="I'll search for that",
+                    tool_calls=[{"name": "web_search", "args": {"query": "test"}, "id": "call_1"}],
+                )]}},
+            )
 
         mock_agent.astream = mock_stream
 
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Should complete without error
         events = []
@@ -383,29 +347,21 @@ class TestToolCallDetection:
         mock_queue = SSEEventQueue()
 
         async def mock_stream(*args, **kwargs):
-            yield {
-                "messages": [
-                    AIMessage(
-                        content="I'll use multiple tools",
-                        tool_calls=[
-                            {
-                                "name": "web_search",
-                                "args": {"query": "test1"},
-                                "id": "call_1",
-                            },
-                            {
-                                "name": "web_search",
-                                "args": {"query": "test2"},
-                                "id": "call_2",
-                            },
-                        ],
-                    )
-                ]
-            }
+            yield (
+                "updates",
+                {"agent": {"messages": [AIMessage(
+                    content="I'll use multiple tools",
+                    tool_calls=[
+                        {"name": "web_search", "args": {"query": "test1"}, "id": "call_1"},
+                        {"name": "web_search", "args": {"query": "test2"}, "id": "call_2"},
+                    ],
+                )]}},
+            )
 
         mock_agent.astream = mock_stream
 
-        await _execute_agent(mock_agent, "Test", {}, mock_queue)
+        await _execute_agent(mock_agent, "Test", {}, mock_queue,
+                             user_id="dev_user", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Should complete without error
         events = []

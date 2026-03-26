@@ -1,12 +1,16 @@
 """测试 create_react_agent 在 context_window 后发出 session_metadata SSE 事件。"""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.asyncio
 async def test_session_metadata_event_emitted():
     """create_react_agent 应发出含 model/session_name/created_at 的 session_metadata 事件。"""
+    import app.agent.langchain_engine as engine_module
     from app.agent.langchain_engine import create_react_agent
+
+    # Reset cache so _build_agent_internal is called (and all DB calls are exercised)
+    engine_module._agent_cache = None
 
     events = []
 
@@ -21,7 +25,13 @@ async def test_session_metadata_event_emitted():
          patch('app.agent.langchain_engine.build_system_prompt') as mock_bsp, \
          patch('app.agent.langchain_engine.create_summarization_middleware',
                return_value=MagicMock()), \
-         patch('app.agent.langchain_engine.create_agent', return_value=MagicMock()):
+         patch('app.agent.langchain_engine.create_agent', return_value=MagicMock()), \
+         patch('app.agent.langchain_engine.get_checkpointer',
+               new=AsyncMock(return_value=MagicMock())), \
+         patch('app.agent.langchain_engine.get_interrupt_store',
+               new=AsyncMock(return_value=MagicMock())), \
+         patch('app.agent.langchain_engine.get_store',
+               new=AsyncMock(return_value=MagicMock())):
 
         mock_slot = MagicMock()
         mock_slot.to_dict.return_value = {'slots': []}

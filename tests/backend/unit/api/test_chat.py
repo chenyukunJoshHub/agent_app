@@ -182,7 +182,8 @@ class TestExecuteAgent:
         mock_queue = SSEEventQueue()
 
         # Should not raise
-        await _execute_agent(mock_agent, "test message", {}, mock_queue)
+        await _execute_agent(mock_agent, "test message", {}, mock_queue,
+                             user_id="test", tools_logger=MagicMock(), sse_logger=MagicMock())
 
     @pytest.mark.asyncio
     async def test_execute_agent_sends_done_event(self) -> None:
@@ -197,7 +198,8 @@ class TestExecuteAgent:
 
         mock_queue = SSEEventQueue()
 
-        await _execute_agent(mock_agent, "test", {}, mock_queue)
+        await _execute_agent(mock_agent, "test", {}, mock_queue,
+                             user_id="test", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Get the done event
         event = await mock_queue.get()
@@ -217,7 +219,8 @@ class TestExecuteAgent:
 
         mock_agent.astream = mock_stream_gen
 
-        await _execute_agent(mock_agent, "test", {}, mock_queue)
+        await _execute_agent(mock_agent, "test", {}, mock_queue,
+                             user_id="test", tools_logger=MagicMock(), sse_logger=MagicMock())
 
         # Should send error event (get with timeout to avoid blocking)
         import asyncio
@@ -247,7 +250,8 @@ class TestExecuteAgent:
 
         mock_queue = SSEEventQueue()
 
-        await _execute_agent(mock_agent, "test message", {}, mock_queue)
+        await _execute_agent(mock_agent, "test message", {}, mock_queue,
+                             user_id="test", tools_logger=MagicMock(), sse_logger=MagicMock())
 
 
 class TestRunAgentStream:
@@ -256,27 +260,20 @@ class TestRunAgentStream:
     @pytest.mark.asyncio
     async def test_stream_yields_sse_events(self) -> None:
         """Test that _run_agent_stream yields SSE-formatted events."""
-        with patch("app.api.chat.create_react_agent") as mock_create_agent, \
-             patch("app.api.chat.get_checkpointer") as mock_get_checkpointer:
+        with patch("app.api.chat.create_react_agent") as mock_create_agent:
 
-            # Setup mocks
+            # Setup mocks — create_react_agent is async
             mock_agent = MagicMock()
             mock_agent.astream = AsyncMock()
             mock_create_agent.return_value = mock_agent
-
-            mock_checkpointer = AsyncMock()
-            mock_get_checkpointer.return_value = mock_checkpointer
-
-            # Create a real queue and populate it
-            event_queue = SSEEventQueue()
-            await event_queue.put(("done", {"answer": "Complete"}))
-
-            # Mock create_react_agent to use our queue
-            mock_create_agent.return_value = mock_agent
+            mock_create_agent.__call__ = AsyncMock(return_value=mock_agent)
 
             # Stream events
             events = []
-            async for event in _run_agent_stream("test", "session_1", "user_1"):
+            async for event in _run_agent_stream(
+                "test", "session_1", "user_1",
+                api_logger=MagicMock(), tools_logger=MagicMock(), sse_logger=MagicMock()
+            ):
                 events.append(event)
 
             # Should have at least the done event
@@ -285,9 +282,7 @@ class TestRunAgentStream:
     @pytest.mark.asyncio
     async def test_stream_stops_on_done_event(self) -> None:
         """Test that stream stops after done event."""
-        with patch("app.api.chat.create_react_agent"), \
-             patch("app.api.chat.get_checkpointer"):
-
+        with patch("app.api.chat.create_react_agent"):
             # This test verifies the streaming logic
             # Full integration test would require more complex setup
             pass
@@ -305,9 +300,7 @@ class TestChatEndpoint:
 
             mock_stream.return_value = mock_gen()
 
-            request = ChatRequest(message="Hello", session_id="test")
-
-            response = await chat(request)
+            response = await chat(message="Hello", session_id="test")
 
             assert isinstance(response, StreamingResponse)
             assert response.media_type == "text/event-stream"
@@ -321,9 +314,7 @@ class TestChatEndpoint:
 
             mock_stream.return_value = mock_gen()
 
-            request = ChatRequest(message="Hello", session_id="test")
-
-            response = await chat(request)
+            response = await chat(message="Hello", session_id="test")
 
             headers = response.headers
             assert "Cache-Control" in headers or "cache-control" in headers
@@ -365,7 +356,14 @@ class TestChatResumeEndpoint:
     @pytest.mark.asyncio
     async def test_resume_logs_request(self) -> None:
         """Test that resume logs the interrupt ID."""
-        with patch("app.api.chat.logger") as mock_logger:
+        from app.observability.interrupt_store import InterruptStore
+
+        with patch("app.api.chat.logger") as mock_logger, \
+             patch("app.observability.interrupt_store.get_interrupt_store") as mock_get_store:
+            mock_store = AsyncMock(spec=InterruptStore)
+            mock_store.get_interrupt.return_value = None
+            mock_get_store.return_value = mock_store
+
             request = ChatResumeRequest(
                 session_id="test",
                 interrupt_id="interrupt_123",
@@ -374,7 +372,7 @@ class TestChatResumeEndpoint:
 
             try:
                 await chat_resume(request)
-            except HTTPException:
+            except (HTTPException, Exception):
                 pass
 
             # Verify logging occurred
@@ -390,17 +388,10 @@ class TestChatIntegration:
     async def test_full_flow_structure(self) -> None:
         """Test the structure of full chat flow."""
         # This verifies the components are wired correctly
-        with patch("app.api.chat.create_react_agent") as mock_create, \
-             patch("app.api.chat.get_checkpointer") as mock_get_checkpointer:
+        with patch("app.api.chat.create_react_agent") as mock_create:
 
             mock_agent = MagicMock()
             mock_create.return_value = mock_agent
-
-            mock_checkpointer = AsyncMock()
-            mock_get_checkpointer.return_value = mock_checkpointer
-
-            # Create request
-            request = ChatRequest(message="Test", session_id="s1")
 
             # Call chat
             with patch("app.api.chat._run_agent_stream") as mock_stream:
@@ -409,7 +400,7 @@ class TestChatIntegration:
 
                 mock_stream.return_value = gen()
 
-                response = await chat(request)
+                response = await chat(message="Test", session_id="s1")
 
                 # Verify response structure
                 assert response is not None

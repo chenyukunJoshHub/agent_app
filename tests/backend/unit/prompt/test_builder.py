@@ -20,15 +20,15 @@ class TestBuildSystemPrompt:
 
     def test_build_system_prompt_minimal(self):
         """测试最小参数调用（无任何可选参数）"""
-        prompt = build_system_prompt()
+        result, _snapshot = build_system_prompt()
 
-        assert prompt
-        assert len(prompt) > 0
-        assert "角色" in prompt or "AI 助手" in prompt
+        assert result
+        assert len(result) > 0
+        assert "角色" in result or "AI 助手" in result
 
     def test_build_system_prompt_with_tools(self):
         """测试带工具列表的调用"""
-        prompt = build_system_prompt(available_tools=["web_search", "read_file"])
+        prompt, _snapshot = build_system_prompt(available_tools=["web_search", "read_file"])
 
         assert "web_search" in prompt
         assert "read_file" in prompt
@@ -49,7 +49,7 @@ class TestBuildSystemPrompt:
             prompt="## 自定义 Skill Prompt\n这是测试内容",
         )
 
-        prompt = build_system_prompt(skill_snapshot=snapshot)
+        prompt, _snapshot = build_system_prompt(skill_snapshot=snapshot)
 
         assert "test_skill" in prompt
         assert "测试技能" in prompt
@@ -66,7 +66,7 @@ class TestBuildSystemPrompt:
             }
         )
 
-        prompt = build_system_prompt(episodic=user_profile)
+        prompt, _snapshot = build_system_prompt(episodic=user_profile)
 
         assert "用户画像" in prompt
         assert "语言: 中文" in prompt
@@ -91,7 +91,7 @@ class TestBuildSystemPrompt:
             preferences={"角色": "法务助理"}
         )
 
-        prompt = build_system_prompt(
+        prompt, _snapshot = build_system_prompt(
             skill_snapshot=snapshot,
             episodic=user_profile,
             available_tools=["web_search", "read_file"],
@@ -106,14 +106,14 @@ class TestBuildSystemPrompt:
 
     def test_build_system_prompt_contains_usage_guide(self):
         """验证生成的 Prompt 包含使用指南"""
-        prompt = build_system_prompt()
+        prompt, _snapshot = build_system_prompt()
 
         assert "使用指南" in prompt
         assert "首先理解用户需求" in prompt
 
     def test_build_system_prompt_contains_static_few_shot(self):
         """验证生成的 Prompt 包含静态 Few-shot"""
-        prompt = build_system_prompt()
+        prompt, _snapshot = build_system_prompt()
 
         assert "示例对话" in prompt
         assert "示例 1" in prompt
@@ -150,7 +150,7 @@ class TestPromptStructure:
 
     def test_prompt_has_proper_order(self):
         """验证 Prompt 各部分顺序正确"""
-        prompt = build_system_prompt(available_tools=["web_search"])
+        prompt, _snapshot = build_system_prompt(available_tools=["web_search"])
 
         # 验证顺序：角色 → 工具 → 协议 → Few-shot → 使用指南
         role_pos = prompt.find("AI 助手")
@@ -167,7 +167,7 @@ class TestPromptStructure:
 
     def test_prompt_not_empty(self):
         """验证生成的 Prompt 不为空"""
-        prompt = build_system_prompt()
+        prompt, _snapshot = build_system_prompt()
 
         assert prompt.strip()
         assert len(prompt.strip()) > 100  # 至少有一定长度

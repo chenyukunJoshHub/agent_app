@@ -95,21 +95,12 @@ class TestLLMFactory:
 
     def test_factory_openai_missing_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test factory raises error when OpenAI API key is missing."""
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        from app.llm.factory import _create_openai
+        from app.config import settings
 
-        # Reload both config and factory to pick up new env var
-        import importlib
-        import app.config
-        import app.llm.factory
-
-        app.config._settings = None
-        importlib.reload(app.config)
-        importlib.reload(app.llm.factory)
-
-        from app.llm.factory import llm_factory
-        with pytest.raises(ValueError, match="OPENAI_API_KEY is required"):
-            llm_factory()
+        with patch.object(settings, 'openai_api_key', ''):
+            with pytest.raises(ValueError, match="OPENAI_API_KEY is required"):
+                _create_openai()
 
 
 class TestCreateOllama:
@@ -131,6 +122,7 @@ class TestCreateOllama:
             model=settings.ollama_model,
             temperature=settings.ollama_temperature,
             client_kwargs={"timeout": settings.ollama_timeout},
+            profile={"max_input_tokens": 128000},
         )
         assert result == mock_instance
 

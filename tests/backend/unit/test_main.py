@@ -35,20 +35,13 @@ class TestLifespan:
 
     @pytest.mark.asyncio
     async def test_lifespan_handles_db_init_error(self) -> None:
-        """Test that lifespan handles database init errors gracefully."""
-        with patch("app.main.init_db") as mock_init_db, \
-             patch("app.main.logger") as mock_logger:
-
+        """Test that lifespan propagates database init errors (fatal startup error)."""
+        with patch("app.main.init_db") as mock_init_db:
             mock_init_db.side_effect = Exception("DB init failed")
 
-            async with lifespan(app):
-                # Should not raise, just log error
-                pass
-
-            # Verify error was logged
-            mock_logger.error.assert_called_once()
-            call_args = str(mock_logger.error.call_args)
-            assert "Failed to initialize database" in call_args
+            with pytest.raises(Exception, match="DB init failed"):
+                async with lifespan(app):
+                    pass
 
     @pytest.mark.asyncio
     async def test_lifespan_handles_close_error(self) -> None:
@@ -65,7 +58,7 @@ class TestLifespan:
             # Verify error was logged
             mock_logger.error.assert_called()
             call_args = str(mock_logger.error.call_args)
-            assert "Error closing database" in call_args
+            assert "Close failed" in call_args
 
 
 class TestHealthCheck:

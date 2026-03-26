@@ -3,8 +3,9 @@ Unit tests for SSE event types.
 
 These tests verify event dataclasses and serialization.
 """
+import asyncio
 import json
-
+import pytest
 
 from app.observability.events import (
     DoneEvent,
@@ -208,3 +209,96 @@ class TestEventSequence:
         assert event1.seq == 1
         assert event2.seq == 2
         assert event3.seq == 3
+
+
+class TestSlotUpdateEvent:
+    """Test slot_update SSE event emission."""
+
+    def test_emit_slot_update_with_content(self) -> None:
+        """Test emit_slot_update includes content field."""
+        from app.observability.trace_events import emit_slot_update
+
+        async def run_test():
+            # Create a mock queue to capture the emitted event
+            captured_events = []
+
+            def mock_put(event_tuple):
+                captured_events.append(event_tuple)
+
+            # Mock queue with put method
+            class MockQueue:
+                def put(self, event_tuple):
+                    mock_put(event_tuple)
+
+            # Emit slot update with content
+            await emit_slot_update(
+                MockQueue(),
+                name="episodic",
+                display_name="用户画像",
+                tokens=150,
+                enabled=True,
+                content="[用户画像]\n  domain: legal-tech\n  language: zh",
+            )
+
+            # Verify event was captured
+            assert len(captured_events) == 1
+            event_type, payload = captured_events[0]
+            assert event_type == "slot_update"
+            assert payload["name"] == "episodic"
+            assert payload["display_name"] == "用户画像"
+            assert payload["tokens"] == 150
+            assert payload["enabled"] is True
+            assert payload["content"] == "[用户画像]\n  domain: legal-tech\n  language: zh"
+
+        asyncio.run(run_test())
+
+    def test_emit_slot_update_with_empty_content(self) -> None:
+        """Test emit_slot_update with empty content."""
+        from app.observability.trace_events import emit_slot_update
+
+        async def run_test():
+            captured_events = []
+
+            def mock_put(event_tuple):
+                captured_events.append(event_tuple)
+
+            class MockQueue:
+                def put(self, event_tuple):
+                    mock_put(event_tuple)
+
+            # Emit slot update without content
+            await emit_slot_update(
+                MockQueue(),
+                name="rag",
+                display_name="RAG 知识库",
+                tokens=0,
+                enabled=False,
+                content="",
+            )
+
+            # Verify event was captured with empty content
+            assert len(captured_events) == 1
+            event_type, payload = captured_events[0]
+            assert event_type == "slot_update"
+            assert payload["content"] == ""
+            assert payload["enabled"] is False
+            assert payload["tokens"] == 0
+
+        asyncio.run(run_test())
+
+    def test_emit_slot_update_none_queue(self) -> None:
+        """Test emit_slot_update with None queue is no-op."""
+        from app.observability.trace_events import emit_slot_update
+
+        async def run_test():
+            # Should not raise error with None queue
+            await emit_slot_update(
+                None,
+                name="episodic",
+                display_name="用户画像",
+                tokens=100,
+                enabled=True,
+                content="test content",
+            )
+
+        asyncio.run(run_test())
