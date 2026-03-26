@@ -3,13 +3,46 @@ File reading tool for Agent system.
 
 Provides secure file reading capability with size limits and validation.
 """
+import mimetypes
 from pathlib import Path
 
 from langchain_core.tools import tool
 from loguru import logger
 
+# Default workspace root: two levels up from this file (backend/app/tools/ → project root)
+_DEFAULT_WORKSPACE = Path(__file__).parents[3]
+
 # Maximum file size for reading files (256KB)
 MAX_FILE_BYTES = 256_000
+
+# Blocked MIME types (binary files that should not be read as text)
+BLOCKED_MIME_TYPES = {
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+    'image/svg+xml',
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'audio/mpeg',
+    'audio/wav',
+    'application/pdf',
+    'application/zip',
+    'application/x-tar',
+    'application/gzip',
+}
+
+
+def _get_workspace() -> Path:
+    """Return the configured workspace root, falling back to _DEFAULT_WORKSPACE."""
+    try:
+        from app.config import settings
+        if settings.workspace_dir:
+            return Path(settings.workspace_dir).expanduser().resolve()
+    except Exception:
+        pass
+    return _DEFAULT_WORKSPACE
 
 
 def _validate_path(path: str) -> Path:
@@ -40,8 +73,12 @@ def _validate_path(path: str) -> Path:
             "Access denied: path traversal (..) is not allowed"
         )
 
-    # Expand user home directory if present
-    expanded = input_path.expanduser().resolve()
+    # Resolve relative paths against workspace root instead of CWD
+    if not input_path.is_absolute() and "~" not in str(path):
+        expanded = (_get_workspace() / input_path).resolve()
+    else:
+        # Expand user home directory if present
+        expanded = input_path.expanduser().resolve()
 
     # Check for sensitive system paths using path components
     # This handles symlinks (e.g., macOS /etc -> /private/etc)
@@ -98,6 +135,15 @@ def _validate_path(path: str) -> Path:
     if not expanded.is_file():
         raise FileNotFoundError(f"File not found: {path}")
 
+    # Check MIME type to prevent reading binary files
+    mime_type, _ = mimetypes.guess_type(str(expanded))
+    if mime_type and mime_type in BLOCKED_MIME_TYPES:
+        raise ValueError(
+            f"Cannot read binary file: {mime_type}. "
+            f"The read_file tool only supports text files. "
+            f"Images, videos, audio files, and PDFs are not supported."
+        )
+
     return expanded
 
 
@@ -130,18 +176,20 @@ def read_file(path: str) -> str:
         PermissionError: 无读取权限
         ValueError: 文件大小超过限制（256KB）或路径包含被阻止的模式
     """
+    logger.info(f"📄 [工具:read_file] 开始读取文件: {path}")
     # Validate path is within allowed directory (prevents path traversal)
     validated_path = _validate_path(path)
+    logger.debug(f"🔒 [工具:read_file] 路径安全校验通过: {validated_path}")
 
     # Check file size
     try:
         file_size = validated_path.stat().st_size
     except Exception as e:
-        logger.error(f"Error getting file size for {path}: {e}")
+        logger.error(f"❌ [工具:read_file] 获取文件大小失败: {path} — {e}")
         raise
 
     if file_size > MAX_FILE_BYTES:
-        logger.error(f"File too large: {file_size} > {MAX_FILE_BYTES}")
+        logger.error(f"❌ [工具:read_file] 文件过大，拒绝读取: {file_size} > {MAX_FILE_BYTES} 字节")
         raise ValueError(
             f"File too large: {file_size} > {MAX_FILE_BYTES}"
         )
@@ -151,14 +199,14 @@ def read_file(path: str) -> str:
         with validated_path.open(encoding="utf-8") as f:
             content = f.read()
         logger.info(
-            f"Successfully read file: {validated_path} ({file_size} bytes)"
+            f"✅ [工具:read_file] 文件读取成功: {validated_path}，大小={file_size} 字节"
         )
         return content
     except PermissionError:
-        logger.error(f"Permission denied reading file: {validated_path}")
+        logger.error(f"❌ [工具:read_file] 权限不足，无法读取: {validated_path}")
         raise
     except Exception as e:
-        logger.error(f"Error reading file {validated_path}: {e}")
+        logger.error(f"❌ [工具:read_file] 读取异常: {validated_path} — {e}")
         raise
 
 
