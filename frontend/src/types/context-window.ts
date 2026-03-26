@@ -6,25 +6,27 @@
  */
 
 export interface SlotAllocation {
-  /** Slot ①: System Prompt + Skill Registry + Few-shot */
+  /** Slot ①: System Prompt (role definition) */
   system: number;
-  /** Slot ②: Active Skill content */
-  active_skill: number;
-  /** Slot ③: Dynamic Few-shot */
+  /** Slot ②: Skill Registry list */
+  skill_registry: number;
+  /** Slot ③: Skill Protocol rules */
+  skill_protocol: number;
+  /** Slot ④: Dynamic Few-shot */
   few_shot: number;
-  /** Slot ④: RAG background knowledge */
+  /** Slot ⑤: RAG background knowledge */
   rag: number;
-  /** Slot ⑤: Episodic memory (user profile) */
+  /** Slot ⑥: Episodic memory (user profile) */
   episodic: number;
-  /** Slot ⑥: Procedural memory */
+  /** Slot ⑦: Procedural memory */
   procedural: number;
-  /** Slot ⑦: Tools schema */
+  /** Slot ⑧: Tools schema */
   tools: number;
-  /** Slot ⑧: Conversation history (elastic) */
+  /** Slot ⑨: Conversation history (elastic) */
   history: number;
-  /** Slot ⑨: Output format */
+  /** Slot ⑩: Output format */
   output_format: number;
-  /** Slot ⑩: User input */
+  /** User input (merged into history for display) */
   user_input: number;
 }
 
@@ -129,7 +131,8 @@ export interface SlotDetailsEvent {
 
 export const SLOT_COLORS: Record<keyof SlotAllocation, string> = {
   system: '#5E6AD2',
-  active_skill: '#8B5CF6',
+  skill_registry: '#0EA5E9',
+  skill_protocol: '#7C3AED',
   few_shot: '#06B6D4',
   rag: '#10B981',
   episodic: '#F59E0B',
@@ -164,7 +167,8 @@ export interface SessionMetaEvent {
 /** 与 UI / pencil 中 12 段条顺序一致：①—⑩ 按 Prompt v20，后接空白与压缩 */
 export const SLOT_VISUAL_ORDER = [
   'system',
-  'active_skill',
+  'skill_registry',
+  'skill_protocol',
   'few_shot',
   'rag',
   'episodic',
@@ -172,7 +176,6 @@ export const SLOT_VISUAL_ORDER = [
   'tools',
   'history',
   'output_format',
-  'user_input',
 ] as const satisfies readonly (keyof SlotAllocation)[];
 
 /** 12 段上下文占比条配色（10 Slot + 剩余 + 压缩） */
@@ -184,7 +187,8 @@ export const TWELVE_SEGMENT_CONTEXT_COLORS: readonly string[] = [
 
 export const SLOT_DISPLAY_NAMES: Record<keyof SlotAllocation, string> = {
   system: '系统提示词',
-  active_skill: '活跃技能',
+  skill_registry: '技能注册表',
+  skill_protocol: '技能协议',
   few_shot: '动态示例',
   rag: '背景知识',
   episodic: '用户画像',
@@ -214,7 +218,8 @@ export const EMPTY_CONTEXT_DATA: ContextWindowData = {
     working_budget: 32768,
     slots: {
       system: 0,
-      active_skill: 0,
+      skill_registry: 0,
+      skill_protocol: 0,
       few_shot: 0,
       rag: 0,
       episodic: 0,
@@ -233,22 +238,22 @@ export const EMPTY_CONTEXT_DATA: ContextWindowData = {
     },
   },
   slotUsage: [
-    { name: 'system', displayName: '① System Prompt', allocated: 0, used: 0, color: '#5E6AD2' },
-    { name: 'active_skill', displayName: '② 活跃技能', allocated: 0, used: 0, color: '#8B5CF6' },
-    { name: 'few_shot', displayName: '③ 动态 Few-shot', allocated: 0, used: 0, color: '#06B6D4' },
-    { name: 'rag', displayName: '④ RAG 背景知识', allocated: 0, used: 0, color: '#10B981' },
-    { name: 'episodic', displayName: '⑤ 用户画像', allocated: 0, used: 0, color: '#F59E0B' },
-    { name: 'procedural', displayName: '⑥ 程序性记忆', allocated: 0, used: 0, color: '#EF4444' },
-    { name: 'tools', displayName: '⑦ 工具定义', allocated: 0, used: 0, color: '#3B82F6' },
-    { name: 'history', displayName: '⑧ 会话历史', allocated: 0, used: 0, color: '#6366F1' },
+    { name: 'system', displayName: '① 系统提示词', allocated: 0, used: 0, color: '#5E6AD2' },
     {
-      name: 'output_format',
-      displayName: '⑨ 输出格式规范',
+      name: 'skill_registry',
+      displayName: '② 技能注册表',
       allocated: 0,
       used: 0,
-      color: '#EC4899',
+      color: '#0EA5E9',
     },
-    { name: 'user_input', displayName: '⑩ 本轮用户输入', allocated: 0, used: 0, color: '#22C55E' },
+    { name: 'skill_protocol', displayName: '③ 技能协议', allocated: 0, used: 0, color: '#7C3AED' },
+    { name: 'few_shot', displayName: '④ 动态 Few-shot', allocated: 0, used: 0, color: '#06B6D4' },
+    { name: 'rag', displayName: '⑤ RAG 背景知识', allocated: 0, used: 0, color: '#10B981' },
+    { name: 'episodic', displayName: '⑥ 用户画像', allocated: 0, used: 0, color: '#F59E0B' },
+    { name: 'procedural', displayName: '⑦ 程序记忆', allocated: 0, used: 0, color: '#EF4444' },
+    { name: 'tools', displayName: '⑧ 工具定义', allocated: 0, used: 0, color: '#3B82F6' },
+    { name: 'history', displayName: '⑨ 会话历史', allocated: 0, used: 0, color: '#6366F1' },
+    { name: 'output_format', displayName: '⑩ 输出格式', allocated: 0, used: 0, color: '#EC4899' },
   ],
   compressionEvents: [],
 };

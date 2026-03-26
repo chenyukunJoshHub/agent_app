@@ -84,30 +84,43 @@ export function SessionMetadataSection({
             {sessionMeta?.session_name ?? '—'}
           </div>
         </div>
-        <div>
-          <div className="text-text-muted">消息数量</div>
-          <div className="mt-0.5 font-semibold text-text-primary">{totalMessages}</div>
-        </div>
-
-        {/* Row 2 */}
+           {/* Row 2 */}
         <div>
           <div className="text-text-muted">上下文限制</div>
           <div className="mt-0.5 font-semibold text-text-primary">
             {formatNumber(budget.model_context_window)} tokens
           </div>
         </div>
-        <div>
+
+         <div>
           <div className="text-text-muted">激活模型</div>
           <div className="mt-0.5 truncate font-semibold text-text-primary">
             {sessionMeta?.model ?? '—'}
           </div>
         </div>
+         <div>
+          <div className="text-text-muted">工作窗口</div>
+          <div className="mt-0.5 font-semibold text-text-primary">
+            {formatTokens(budget.working_budget)}
+          </div>
+        </div>
 
+       
+       
         {/* Row 3 */}
         <div>
-          <div className="text-text-muted">总 token</div>
+          <div className="text-text-muted">已用 token</div>
           <div className="mt-0.5 font-semibold text-text-primary">
             {formatTokens(budget.usage.total_used)}
+          </div>
+        </div>
+
+
+        {/* Row 4 */}
+        <div>
+          <div className="text-text-muted">可用 token</div>
+          <div className="mt-0.5 font-semibold text-text-primary">
+            {formatTokens(budget.usage.total_remaining)}
           </div>
         </div>
         <div>
@@ -120,19 +133,11 @@ export function SessionMetadataSection({
           </div>
         </div>
 
-        {/* Row 4 */}
-        <div>
-          <div className="text-text-muted">输入 token</div>
-          <div className="mt-0.5 font-semibold text-text-primary">
-            {formatTokens(budget.usage.input_budget)}
-          </div>
+      <div>
+          <div className="text-text-muted">消息数量</div>
+          <div className="mt-0.5 font-semibold text-text-primary">{totalMessages}</div>
         </div>
-        <div>
-          <div className="text-text-muted">输出 token</div>
-          <div className="mt-0.5 font-semibold text-text-primary">
-            {formatTokens(budget.usage.output_reserve)}
-          </div>
-        </div>
+     
 
         {/* Row 5 */}
         <div>
@@ -149,18 +154,7 @@ export function SessionMetadataSection({
         </div>
 
         {/* Row 6 */}
-        <div>
-          <div className="text-text-muted">创建时间</div>
-          <div className="mt-0.5 font-semibold text-text-primary">
-            {formatDate(sessionMeta?.created_at)}
-          </div>
-        </div>
-        <div>
-          <div className="text-text-muted">最后活动</div>
-          <div className="mt-0.5 font-semibold text-text-primary">
-            {formatLastActivity(lastActivityTime)}
-          </div>
-        </div>
+
       </div>
     </div>
   );

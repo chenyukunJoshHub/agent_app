@@ -6,11 +6,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { StateMessage, CompressionEvent } from '@/types/context-window';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
-  stateMessages?: StateMessage[];         // 新增
+  stateMessages?: StateMessage[]; // 新增
   compressionEvents?: CompressionEvent[]; // 新增
 }
 
@@ -42,10 +44,20 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
           'max-w-[80%] rounded-2xl px-4 py-3 shadow-sm',
           isUser
             ? 'bg-primary text-white rounded-br-sm'
-            : 'bg-background-card border border-border text-text-primary rounded-bl-sm'
+            : 'bg-bg-card border border-border text-text-primary rounded-bl-sm'
         )}
       >
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+        ) : (
+          <div
+            className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed
+                          prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1
+                          prose-li:my-0 prose-code:text-xs prose-pre:my-2"
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          </div>
+        )}
 
         {/* Tool Calls */}
         {message.tool_calls && message.tool_calls.length > 0 && (
@@ -96,7 +108,7 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
   const config = statusConfig[toolCall.status] || statusConfig.pending;
 
   return (
-    <div className="rounded-lg border border-border bg-background-alt p-3 shadow-sm">
+    <div className="rounded-lg border border-border bg-bg-alt p-3 shadow-sm">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Wrench className="w-4 h-4 text-primary" />
@@ -144,10 +156,7 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
 function ToolMessageBubble({ msg }: { msg: StateMessage }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div
-      data-testid="tool-message-bubble"
-      className="flex gap-3 mb-3"
-    >
+    <div data-testid="tool-message-bubble" className="flex gap-3 mb-3">
       <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-bg-muted border border-border flex items-center justify-center">
         <Wrench className="w-4 h-4 text-text-muted" />
       </div>
@@ -157,7 +166,9 @@ function ToolMessageBubble({ msg }: { msg: StateMessage }) {
           className="text-xs text-text-secondary text-left"
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? msg.content : (msg.content || '').slice(0, 100) + ((msg.content || '').length > 100 ? '...' : '')}
+          {expanded
+            ? msg.content
+            : (msg.content || '').slice(0, 100) + ((msg.content || '').length > 100 ? '...' : '')}
         </button>
       </div>
     </div>
@@ -166,10 +177,7 @@ function ToolMessageBubble({ msg }: { msg: StateMessage }) {
 
 function CompressionNotification({ event }: { event: CompressionEvent }) {
   return (
-    <div
-      data-testid="compression-notification"
-      className="flex items-center gap-2 my-3 px-4"
-    >
+    <div data-testid="compression-notification" className="flex items-center gap-2 my-3 px-4">
       <div className="flex-1 h-px bg-border" />
       <span className="text-xs text-text-muted shrink-0">
         💾 历史已压缩 · 节省 {event.tokens_saved.toLocaleString()} tokens ({event.method})
@@ -179,7 +187,12 @@ function CompressionNotification({ event }: { event: CompressionEvent }) {
   );
 }
 
-export function MessageList({ messages, isLoading, stateMessages = [], compressionEvents = [] }: MessageListProps) {
+export function MessageList({
+  messages,
+  isLoading,
+  stateMessages = [],
+  compressionEvents = [],
+}: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -209,7 +222,7 @@ export function MessageList({ messages, isLoading, stateMessages = [], compressi
             </motion.div>
           ) : (
             messages
-              .filter(msg => msg.content.trim() !== '' || msg.role === 'user')
+              .filter((msg) => msg.content.trim() !== '' || msg.role === 'user')
               .map((message, index) => (
                 <MessageBubble key={message.id} message={message} index={index} />
               ))
@@ -217,53 +230,57 @@ export function MessageList({ messages, isLoading, stateMessages = [], compressi
 
           {/* tool role 消息气泡（来自 stateMessages） */}
           {stateMessages
-            .filter(m => m.role === 'tool')
+            .filter((m) => m.role === 'tool')
             .map((msg, i) => (
               <ToolMessageBubble key={`tool_${i}`} msg={msg} />
             ))}
 
           {/* 压缩通知气泡 */}
-          {compressionEvents.map(event => (
+          {compressionEvents.map((event) => (
             <CompressionNotification key={event.id} event={event} />
           ))}
         </AnimatePresence>
 
-        {isLoading && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex gap-3 mb-6"
-          >
-            <div
-              className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary
-                            flex items-center justify-center shadow-md"
+        {isLoading &&
+          !(
+            messages[messages.length - 1]?.role === 'assistant' &&
+            messages[messages.length - 1]?.content.trim() !== ''
+          ) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex gap-3 mb-6"
             >
-              <Bot className="w-4 h-4 text-white" />
-            </div>
-            <div className="bg-background-card border border-border rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-              <div className="flex items-center gap-2">
-                <div className="flex space-x-1">
-                  <motion.div
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 0.6, repeat: Infinity }}
-                    className="w-2 h-2 rounded-full bg-primary"
-                  />
-                  <motion.div
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 0.6, repeat: Infinity, delay: 0.1 }}
-                    className="w-2 h-2 rounded-full bg-primary"
-                  />
-                  <motion.div
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }}
-                    className="w-2 h-2 rounded-full bg-primary"
-                  />
-                </div>
-                <span className="text-sm text-muted-foreground">思考中...</span>
+              <div
+                className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary
+                            flex items-center justify-center shadow-md"
+              >
+                <Bot className="w-4 h-4 text-white" />
               </div>
-            </div>
-          </motion.div>
-        )}
+              <div className="bg-bg-card border border-border rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <div className="flex space-x-1">
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 0.6, repeat: Infinity }}
+                      className="w-2 h-2 rounded-full bg-primary"
+                    />
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 0.6, repeat: Infinity, delay: 0.1 }}
+                      className="w-2 h-2 rounded-full bg-primary"
+                    />
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }}
+                      className="w-2 h-2 rounded-full bg-primary"
+                    />
+                  </div>
+                  <span className="text-sm text-muted-foreground">思考中...</span>
+                </div>
+              </div>
+            </motion.div>
+          )}
       </div>
       <div ref={scrollRef} />
     </div>

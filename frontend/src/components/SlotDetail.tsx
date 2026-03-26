@@ -27,27 +27,19 @@ interface SlotDetailProps {
 export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const statusColor = slot.enabled
-    ? 'text-success-text'
-    : 'text-text-muted';
+  const statusColor = slot.enabled ? 'text-success-text' : 'text-text-muted';
 
-  const bgColor = slot.enabled
-    ? 'bg-bg-card'
-    : 'bg-bg-muted opacity-60';
+  const bgColor = slot.enabled ? 'bg-bg-card' : 'bg-bg-muted opacity-60';
 
   // Truncate content for preview
-  const displayContent = preview && slot.content.length > 200
-    ? slot.content.slice(0, 200) + '...'
-    : slot.content;
+  const displayContent =
+    preview && slot.content.length > 200 ? slot.content.slice(0, 200) + '...' : slot.content;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={cn(
-        "rounded-lg border border-border p-4",
-        bgColor
-      )}
+      className={cn('rounded-lg border border-border p-4', bgColor)}
     >
       {/* Header - Name and Token count */}
       <div
@@ -57,10 +49,7 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
         <div className="flex items-center gap-3 flex-1">
           {/* Expand/Collapse icon */}
           {!preview && (
-            <motion.div
-              animate={{ rotate: isExpanded ? 90 : 0 }}
-              transition={{ duration: 0.2 }}
-            >
+            <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }}>
               <ChevronRight className="w-4 h-4 text-text-secondary" />
             </motion.div>
           )}
@@ -68,21 +57,15 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
           {/* Slot name */}
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-text-secondary" />
-            <span className="font-medium text-text-primary">
-              {slot.display_name}
-            </span>
-            <span className="text-xs text-text-muted">
-              ({slot.name})
-            </span>
+            <span className="font-medium text-text-primary">{slot.display_name}</span>
+            <span className="text-xs text-text-muted">({slot.name})</span>
           </div>
 
           {/* Enabled badge */}
           <div
             className={cn(
-              "text-xs px-2 py-0.5 rounded",
-              slot.enabled
-                ? "bg-success-bg text-success-text"
-                : "bg-bg-muted text-text-muted"
+              'text-xs px-2 py-0.5 rounded',
+              slot.enabled ? 'bg-success-bg text-success-text' : 'bg-bg-muted text-text-muted'
             )}
           >
             {slot.enabled ? '启用' : '未启用'}
@@ -91,7 +74,7 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
 
         {/* Token count */}
         <div className="flex items-center gap-1">
-          <span className={cn("text-sm font-semibold tabular-nums", statusColor)}>
+          <span className={cn('text-sm font-semibold tabular-nums', statusColor)}>
             {slot.tokens.toLocaleString()}
           </span>
           <span className="text-xs text-text-muted">tokens</span>
@@ -110,9 +93,7 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
             {displayContent}
           </div>
           {!preview && slot.content.length > 200 && (
-            <div className="mt-2 text-xs text-text-muted">
-              {slot.content.length} 字符
-            </div>
+            <div className="mt-2 text-xs text-text-muted">{slot.content.length} 字符</div>
           )}
         </motion.div>
       )}

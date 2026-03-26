@@ -24,10 +24,10 @@ export default defineConfig({
   // 测试文件匹配模式
   testMatch: '**/*.spec.ts',
 
-  // 超时设置
-  timeout: 30 * 1000,
+  // 超时设置（本地 Ollama 模型响应较慢，延长到 3 分钟）
+  timeout: 180 * 1000,
   expect: {
-    timeout: 5000,
+    timeout: 30 * 1000,
   },
 
   // 失败时重试（本地也重试一次，应对 AI 行为不确定性）
@@ -67,10 +67,10 @@ export default defineConfig({
     video: 'retain-on-failure',
 
     // 导航超时（含冷启动 Next）
-    navigationTimeout: 30 * 1000,
+    navigationTimeout: 60 * 1000,
 
-    // 操作超时
-    actionTimeout: 10 * 1000,
+    // 操作超时（等待 Ollama 响应）
+    actionTimeout: 30 * 1000,
 
     // 视口大小（规范要求）
     viewport: { width: 1440, height: 900 },
@@ -113,7 +113,7 @@ export default defineConfig({
             command:
               'cd ../backend && python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
             url: 'http://127.0.0.1:8000/health',
-            timeout: 60 * 1000,
+            timeout: 120 * 1000,
             reuseExistingServer: true,
           },
           {
@@ -121,7 +121,7 @@ export default defineConfig({
             command: 'npx next dev -H 127.0.0.1 -p 3010',
             url: 'http://127.0.0.1:3010',
             reuseExistingServer: true,
-            timeout: 120 * 1000,
+            timeout: 180 * 1000,
           },
         ],
       }),

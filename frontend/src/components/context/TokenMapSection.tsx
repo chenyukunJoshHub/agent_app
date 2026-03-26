@@ -29,8 +29,8 @@ export function TokenMapSection({ budget, slotUsage }: TokenMapSectionProps) {
   const autocompact = budget.usage.autocompact_buffer ?? 0;
 
   // Build slot token map from slotUsage (used), falling back to budget.slots (allocated)
-  const slotUsageMap = Object.fromEntries(slotUsage.map(s => [s.name, s.used]));
-  const segments = SLOT_VISUAL_ORDER.map(key => ({
+  const slotUsageMap = Object.fromEntries(slotUsage.map((s) => [s.name, s.used]));
+  const segments = SLOT_VISUAL_ORDER.map((key) => ({
     key,
     tokens: slotUsageMap[key] ?? budget.slots[key] ?? 0,
     color: SLOT_COLORS[key],
@@ -45,8 +45,8 @@ export function TokenMapSection({ budget, slotUsage }: TokenMapSectionProps) {
     { key: 'autocompact', tokens: autocompact, color: CONTEXT_AUTOCOMPACT_BUFFER_COLOR },
   ];
 
-  // Table rows: only non-zero slots
-  const tableRows = segments.filter(s => s.tokens > 0);
+  // Table rows: all slots (show — for zero-token slots)
+  const tableRows = segments;
 
   const wbLabel = wb >= 1000 ? `${Math.round(wb / 1024)}k` : String(wb);
 
@@ -64,15 +64,12 @@ export function TokenMapSection({ budget, slotUsage }: TokenMapSectionProps) {
       <div className="mx-4 mb-4 rounded-lg border border-border bg-bg-card p-3">
         {/* Subtitle */}
         <div className="mb-2 text-[10px] font-semibold text-text-muted">
-          12 档 Token 占比（{wbLabel} 工作窗口）
+          10 档 Token 占比（{wbLabel} 工作窗口）
         </div>
 
         {/* 12-segment proportional bar — flex sizing avoids division-by-zero */}
-        <div
-          data-testid="token-bar"
-          className="mb-3 flex h-2 overflow-hidden rounded"
-        >
-          {barSegments.map(seg => (
+        <div data-testid="token-bar" className="mb-3 flex h-2 overflow-hidden rounded">
+          {barSegments.map((seg) => (
             <div
               key={seg.key}
               style={{
@@ -86,10 +83,14 @@ export function TokenMapSection({ budget, slotUsage }: TokenMapSectionProps) {
 
         {/* Monospace detail table */}
         <pre className="font-mono text-[9px] leading-relaxed text-text-secondary">
-          {tableRows.map(s => {
-            const label = SLOT_DISPLAY_NAMES[s.key as keyof typeof SLOT_DISPLAY_NAMES] ?? s.key;
-            return `${label.padEnd(8)}  ${formatTokens(s.tokens).padStart(6)}  ${formatPct(s.tokens, wb).padStart(6)}\n`;
-          }).join('')}
+          {tableRows
+            .map((s) => {
+              const label = SLOT_DISPLAY_NAMES[s.key as keyof typeof SLOT_DISPLAY_NAMES] ?? s.key;
+              const tokStr = s.tokens > 0 ? formatTokens(s.tokens) : '—';
+              const pctStr = s.tokens > 0 ? formatPct(s.tokens, wb) : '—';
+              return `${label.padEnd(8)}  ${tokStr.padStart(6)}  ${pctStr.padStart(6)}\n`;
+            })
+            .join('')}
           {`剩余可用  ${formatTokens(remaining).padStart(6)}  ${formatPct(remaining, wb).padStart(6)}\n`}
           {`压缩预留  ${formatTokens(autocompact).padStart(6)}  ${formatPct(autocompact, wb).padStart(6)}`}
         </pre>

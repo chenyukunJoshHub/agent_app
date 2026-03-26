@@ -248,44 +248,13 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
             </motion.div>
           </div>
 
-          <div>
-            {/* Percentage and remaining */}
-            <div className="mt-2 flex items-center justify-between text-xs">
-              <span className="text-text-muted" data-testid="overall-percentage">
-                {usagePercentage.toFixed(1)}% 已使用
-              </span>
-              <span className="text-xs text-text-muted" data-testid="overall-remaining">
-                {formatNumber(budget.usage.total_remaining)} 剩余
-              </span>
-            </div>
-
-            {/* Reserved Buffer */}
-            <div className="flex items-center justify-between text-sm border-t border-border pt-2">
-              <span className="text-text-secondary">预留Autocompac Buffer</span>
-              <span className="text-xs text-text-primary tabular-nums">
-                {formatNumber(reservedBuffer)} (
-                {(totalBudget > 0 ? (reservedBuffer / totalBudget) * 100 : 0).toFixed(1)}%)
-              </span>
-            </div>
-
-            {/* Actual Savings */}
-            {actualSavings > 0 && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-text-secondary">实际节省</span>
-                <span className="text-xs text-primary tabular-nums text-success-text">
-                  -{formatNumber(actualSavings)} ({compressionEvents.length} 次事件)
-                </span>
-              </div>
-            )}
-
-            {/* Free Space */}
-            <div className="flex items-center justify-between text-sm border-t border-border pt-2">
-              <span className="text-text-secondary">Free space</span>
-              <span className="text-xs text-primary tabular-nums">
-                {formatNumber(freeSpace)} (
-                {(totalBudget > 0 ? (freeSpace / totalBudget) * 100 : 0).toFixed(1)}%)
-              </span>
-            </div>
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <span className="text-text-muted" data-testid="overall-percentage">
+              {usagePercentage.toFixed(1)}% 已使用
+            </span>
+            <span className="text-xs text-text-muted" data-testid="overall-remaining">
+              {formatNumber(budget.usage.total_remaining)} 剩余
+            </span>
           </div>
         </div>
 
