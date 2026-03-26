@@ -23,7 +23,7 @@ from loguru import logger
 
 from app.agent.context import AgentContext
 from app.memory.manager import MemoryManager
-from app.memory.schemas import MemoryContext
+from app.memory.schemas import MemoryContext, ProceduralMemory
 from app.observability.trace_events import emit_slot_update, emit_trace_event
 
 
@@ -93,11 +93,15 @@ class MemoryMiddleware(AgentMiddleware):
         )
 
         # Load user profile from store (returns empty UserProfile if not found)
-        logger.info(f"MemoryMiddleware: abefore_agent  -load_episodic ")
+        logger.info(f"MemoryMiddleware: abefore_agent  load_episodic + load_procedural")
         episodic = await self.mm.load_episodic(user_id)
 
+        # Load procedural memory (workflow SOPs) from store
+        procedural_data = await self.mm.load_procedural(user_id)
+        procedural = ProceduralMemory(workflows=procedural_data.get("workflows", {})) if procedural_data else ProceduralMemory()
+
         # Create MemoryContext and inject into state
-        memory_ctx = MemoryContext(episodic=episodic)
+        memory_ctx = MemoryContext(episodic=episodic, procedural=procedural)
 
         logger.debug(
             f"MemoryMiddleware: loaded profile for user={user_id}, "
