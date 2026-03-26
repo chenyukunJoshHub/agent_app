@@ -18,12 +18,13 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
+from app.agent.context import AgentContext
 from app.memory.manager import MemoryManager
 from app.memory.schemas import MemoryContext
-from app.observability.trace_events import emit_trace_event
+from app.observability.trace_events import emit_slot_update, emit_trace_event
 
 
 class MemoryState(TypedDict, total=False):
@@ -52,19 +53,15 @@ class MemoryMiddleware(AgentMiddleware):
 
     state_schema = MemoryState  # Per architecture doc §2.5 solution A
 
-    def __init__(
-        self,
-        memory_manager: MemoryManager,
-        sse_queue: Any | None = None,
-    ) -> None:
+    def __init__(self, memory_manager: MemoryManager) -> None:
         """Initialize MemoryMiddleware.
 
         Args:
-            memory_manager: MemoryManager instance for store operations
-            sse_queue: Optional SSE queue for detailed trace events
+            memory_manager: MemoryManager instance for store operations.
+                SSE queue and user_id are injected per-request via
+                runtime.context (AgentContext).
         """
         self.mm = memory_manager
-        self.sse_queue = sse_queue
         logger.info("MemoryMiddleware initialized (P0 mode: load + inject)")
 
     async def abefore_agent(
@@ -83,19 +80,20 @@ class MemoryMiddleware(AgentMiddleware):
             dict | None: State updates with memory_ctx
         """
         logger.debug("MemoryMiddleware: abefore_agent called")
+        # user_id and sse_queue come from per-request AgentContext
+        ctx: AgentContext | None = getattr(runtime, "context", None)
+        sse_queue = ctx.sse_queue if ctx else None
+        user_id = ctx.user_id if ctx else ""
+
         await emit_trace_event(
-            self.sse_queue,
+            sse_queue,
             stage="memory",
             step="load_start",
             status="start",
         )
 
-        # Get user_id from runtime.config["configurable"]
-        user_id = ""
-        if hasattr(runtime, "config") and "configurable" in runtime.config:
-            user_id = runtime.config["configurable"].get("user_id", "")
-
         # Load user profile from store (returns empty UserProfile if not found)
+        logger.info(f"MemoryMiddleware: abefore_agent  -load_episodic ")
         episodic = await self.mm.load_episodic(user_id)
 
         # Create MemoryContext and inject into state
@@ -103,10 +101,10 @@ class MemoryMiddleware(AgentMiddleware):
 
         logger.debug(
             f"MemoryMiddleware: loaded profile for user={user_id}, "
-            f"preferences={len(episodic.preferences)} items"
+            f"preferences(偏好设置)={len(episodic.preferences)} items"
         )
         await emit_trace_event(
-            self.sse_queue,
+            sse_queue,
             stage="memory",
             step="load_success",
             payload={
@@ -126,6 +124,9 @@ class MemoryMiddleware(AgentMiddleware):
         Per architecture doc §2.5: Ephemeral injection into System Prompt.
         Per architecture doc §1.4: Uses request.override() to avoid polluting history.
 
+        Always emits slot_update for both 'episodic' and 'history' slots so the
+        ContextPanel reflects real-time token usage even when no profile exists.
+
         Args:
             request: Model request (contains messages and state)
             handler: Next handler in chain
@@ -133,74 +134,115 @@ class MemoryMiddleware(AgentMiddleware):
         Returns:
             Model response from handler
         """
-        logger.debug("MemoryMiddleware: wrap_model_call called")
+        import asyncio
+        from langchain_core.messages import SystemMessage
+        from app.utils.token import count_tokens
 
-        # Get memory_ctx from request.state
+        logger.debug("MemoryMiddleware: wrap_model_call called llm之前")
+
+        ctx: AgentContext | None = getattr(getattr(request, "runtime", None), "context", None)
+        sse_queue = ctx.sse_queue if ctx else None
+
+        # --- 1. Build ephemeral memory text (may be empty) ---
         memory_ctx = None
         if request.state and "memory_ctx" in request.state:
             memory_ctx = request.state["memory_ctx"]
 
-        if not memory_ctx:
-            # No profile to inject, pass through
-            if self.sse_queue is not None:
-                try:
-                    import asyncio
+        # Build injection text from all processors via unified contract.
+        # Each processor (EpisodicProcessor, ProceduralProcessor, ...) returns "" if nothing to inject.
+        # Order in parts dict determines injection order (episodic before procedural).
+        #
+        # Note: Architecture doc §1.4 specifies request.override(system_message=...),
+        # but injecting into HumanMessage is used instead (more reliable with this framework).
+        # Functionally equivalent — content is ephemeral and does not pollute history semantics.
+        parts: dict[str, str] = {}
+        if memory_ctx:
+            logger.info("MemoryMiddleware: wrap_model_call  build_injection_parts")
+            parts = self.mm.build_injection_parts(memory_ctx)
+        memory_text = "".join(parts.values())
 
+        # --- 2. Inject into messages if profile exists ---
+        messages = list(request.messages)
+        if memory_text:
+            injected_tokens = count_tokens(memory_text)
+            logger.debug(
+                f"MemoryMiddleware: injecting profile ({len(memory_text)} chars, {injected_tokens} tokens)"
+            )
+            last_human_idx = next(
+                (i for i in reversed(range(len(messages))) if isinstance(messages[i], HumanMessage)),
+                None,
+            )
+            if last_human_idx is not None:
+                original = messages[last_human_idx]
+                original_content = original.content if isinstance(original.content, str) else str(original.content)
+                messages[last_human_idx] = HumanMessage(
+                    content=memory_text + "\n\n---\n\n" + original_content
+                )
+            else:
+                messages.append(HumanMessage(content=memory_text))
+
+            if sse_queue is not None:
+                try:
                     asyncio.create_task(
                         emit_trace_event(
-                            self.sse_queue,
-                            stage="memory",
-                            step="inject_skip",
-                            status="skip",
-                            payload={"reason": "no_memory_ctx"},
+                            sse_queue, stage="memory", step="inject_success",
+                            payload={"injected_chars": len(memory_text), "injected_tokens": injected_tokens},
                         )
                     )
                 except RuntimeError:
                     pass
-            return handler(request)
-
-        # Build ephemeral prompt
-        memory_text = self.mm.build_ephemeral_prompt(memory_ctx)
-        if not memory_text:
-            # Empty preferences, pass through
-            if self.sse_queue is not None:
+        else:
+            reason = "no_memory_ctx" if not memory_ctx else "empty_preferences"
+            if sse_queue is not None:
                 try:
-                    import asyncio
-
                     asyncio.create_task(
                         emit_trace_event(
-                            self.sse_queue,
-                            stage="memory",
-                            step="inject_skip",
-                            status="skip",
-                            payload={"reason": "empty_preferences"},
+                            sse_queue, stage="memory", step="inject_skip",
+                            status="skip", payload={"reason": reason},
                         )
                     )
                 except RuntimeError:
                     pass
-            return handler(request)
 
-        # Inject into System Message via request.override()
-        existing = request.system_message
-        new_content = (existing.content + memory_text) if existing else memory_text
+        # --- 3. Emit slot_update for each processor + history ---
+        # Build display_name lookup from processors (required by emit_slot_update signature).
+        display_names = {p.slot_name: p.display_name for p in self.mm.processors}
 
-        logger.debug(f"MemoryMiddleware: injecting profile ({len(memory_text)} chars)")
-        if self.sse_queue is not None:
+        # Emit per-processor slot (generic — works for any future processor).
+        # emit_slot_update handles sse_queue=None as a no-op, so always called.
+        # Called via _fire_slot to handle both async (production) and sync (test) contexts.
+        for slot_name, text in parts.items():
+            coro = emit_slot_update(
+                sse_queue,
+                name=slot_name,
+                display_name=display_names.get(slot_name, ""),
+                tokens=count_tokens(text) if text else 0,
+                enabled=bool(text),
+            )
             try:
-                import asyncio
+                asyncio.create_task(coro)
+            except RuntimeError:
+                # No running event loop (e.g. sync test context); discard safely.
+                coro.close()
 
+        # history slot (not a processor, emitted separately)
+        if sse_queue is not None:
+            try:
+                history_tokens = sum(
+                    count_tokens(str(m.content or ""))
+                    for m in messages
+                    if not isinstance(m, SystemMessage)
+                )
                 asyncio.create_task(
-                    emit_trace_event(
-                        self.sse_queue,
-                        stage="memory",
-                        step="inject_success",
-                        payload={"injected_chars": len(memory_text)},
+                    emit_slot_update(
+                        sse_queue, name="history", display_name="对话历史",
+                        tokens=history_tokens, enabled=True,
                     )
                 )
             except RuntimeError:
                 pass
 
-        return handler(request.override(system_message=SystemMessage(content=new_content)))
+        return handler(request.override(messages=messages))
 
     async def awrap_model_call(
         self, request: Any, handler: Any
@@ -242,8 +284,10 @@ class MemoryMiddleware(AgentMiddleware):
             dict | None: State updates (P0: None)
         """
         logger.debug("MemoryMiddleware: aafter_agent called (P0: no-op)")
+        ctx: AgentContext | None = getattr(runtime, "context", None)
+        sse_queue = ctx.sse_queue if ctx else None
         await emit_trace_event(
-            self.sse_queue,
+            sse_queue,
             stage="memory",
             step="save_skip",
             status="skip",
