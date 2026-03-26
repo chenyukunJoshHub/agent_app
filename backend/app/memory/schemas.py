@@ -48,6 +48,21 @@ class UserProfile(BaseModel):
     summary: str = Field(default="", description="User profile summary")
 
 
+class ProceduralMemory(BaseModel):
+    """Procedural memory: workflow SOPs (per architecture doc §2.9).
+
+    Stores named workflow instructions to be injected into LLM prompts.
+    Namespace: ("profile", user_id), Key: "procedural"
+
+    Attributes:
+        workflows: Mapping of workflow name to instruction text
+    """
+
+    workflows: dict[str, str] = Field(
+        default_factory=dict, description="Workflow name → SOP instruction"
+    )
+
+
 class MemoryContext(BaseModel):
     """Working memory turn-level cache (per architecture doc §2.9).
 
@@ -56,8 +71,12 @@ class MemoryContext(BaseModel):
 
     Attributes:
         episodic: User profile loaded from store
+        procedural: Procedural memory loaded from store
     """
 
     episodic: UserProfile = Field(
         default_factory=UserProfile, description="User profile from long-term memory"
+    )
+    procedural: ProceduralMemory = Field(
+        default_factory=ProceduralMemory, description="Procedural memory from long-term memory"
     )
