@@ -4,15 +4,20 @@ import { useState, KeyboardEvent, useRef, useEffect } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { useSkillCommand } from "@/hooks/useSkillCommand";
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, skillId?: string | null, mode?: string | null) => void;
   disabled?: boolean;
 }
 
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [input, setInput] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const { isOpen, filtered, selectedMode, onInputChange, onSelect, onClose } =
+    useSkillCommand();
 
   // 自动调整高度
   useEffect(() => {
@@ -23,14 +28,60 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     }
   }, [input]);
 
+  // 下拉列表打开时重置高亮索引
+  useEffect(() => {
+    if (isOpen) setHighlightedIndex(0);
+  }, [isOpen, filtered]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInput(value);
+    onInputChange(value);
+  };
+
+  const handleSelectSkill = (index: number) => {
+    const skill = filtered[index];
+    if (!skill) return;
+    const newValue = onSelect(skill);
+    setInput(newValue);
+    onInputChange(newValue);
+    textareaRef.current?.focus();
+  };
+
   const handleSend = () => {
-    if (input.trim() && !disabled) {
-      onSend(input.trim());
-      setInput("");
-    }
+    if (!input.trim() || disabled) return;
+    const match = input.trim().match(/^\/([^\s]+)/);
+    const skillId = match ? match[1] : null;
+    const mode = skillId ? selectedMode : null;
+    onSend(input.trim(), skillId, mode);
+    setInput("");
+    onClose();
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.min(i + 1, filtered.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        handleSelectSkill(highlightedIndex);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -39,14 +90,44 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   return (
     <div className="border-t border-border bg-background-alt p-4 transition-colors duration-300">
-      <div className="flex items-end gap-3 max-w-4xl mx-auto">
+      <div className="flex items-end gap-3 max-w-4xl mx-auto relative">
         <div className="flex-1 relative">
+          {/* 技能下拉列表 */}
+          {isOpen && filtered.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-1 w-full max-h-60 overflow-y-auto rounded-xl border border-border bg-bg-card shadow-lg z-50">
+              {filtered.map((skill, index) => (
+                <button
+                  key={skill.name}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // 防止 textarea 失焦
+                    handleSelectSkill(index);
+                  }}
+                  className={cn(
+                    "w-full px-4 py-2.5 text-left flex items-start gap-2 transition-colors",
+                    index === highlightedIndex
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-bg-alt text-text-primary"
+                  )}
+                >
+                  <span className="font-mono font-semibold text-sm shrink-0">
+                    /{skill.name}
+                  </span>
+                  <span className="text-xs text-text-muted truncate">
+                    {skill.description.slice(0, 60)}
+                    {skill.description.length > 60 ? "…" : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="描述任务，例如：帮我查一下茅台今天的股价..."
+            placeholder="描述任务，或输入 / 选择技能..."
             className={cn(
               "w-full resize-none rounded-xl border border-border",
               "bg-background px-4 py-3 text-sm",
@@ -59,7 +140,6 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             rows={1}
             disabled={disabled}
           />
-          {/* 字符计数 */}
           {input.length > 0 && (
             <div className="absolute bottom-3 right-3 text-xs text-muted-foreground">
               {input.length} 字符
