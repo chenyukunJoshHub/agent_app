@@ -1,35 +1,19 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
-import { Activity, ChevronDown, ChevronRight, Database } from 'lucide-react';
+import { Activity, Eye, EyeOff } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
+import type { TraceBlock } from '@/types/trace';
+import { USER_VISIBLE_BLOCKS } from '@/types/trace';
 import type { TraceEvent } from '@/types/trace';
-import { ToolCallCard } from '@/components/ToolCallCard';
+import { cn } from '@/lib/utils';
+import { TraceBlockCard } from '@/components/TraceBlockCard';
 
 interface ExecutionTracePanelProps {
+  traceBlocks: TraceBlock[];
   traceEvents: TraceEvent[];
-  turnStatuses?: Record<string, 'done' | 'error'>; // turnId -> status
+  turnStatuses?: Record<string, 'done' | 'error'>;
 }
-
-const STAGE_LABELS: Record<string, string> = {
-  stream: '流式层',
-  agent_init: '初始化',
-  context: 'Context 组装',
-  memory: '记忆层',
-  react: 'ReAct 循环',
-  tools: '工具层',
-  skills: '技能层',
-  hil: 'HIL 介入',
-};
-
-const STATUS_STYLES: Record<string, string> = {
-  start: 'bg-blue-100 text-blue-700',
-  ok: 'bg-green-100 text-green-700',
-  skip: 'bg-amber-100 text-amber-700',
-  error: 'bg-red-100 text-red-700',
-};
 
 function formatTime(raw: string): string {
   const date = new Date(raw);
@@ -37,183 +21,123 @@ function formatTime(raw: string): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    fractionalSecondDigits: 3,
   });
 }
 
-function prettyJson(data: unknown): string {
-  try {
-    return JSON.stringify(data, null, 2);
-  } catch {
-    return String(data);
+function groupByTurn(blocks: TraceBlock[]): Array<{ turnId: string | undefined; blocks: TraceBlock[] }> {
+  const groups: Array<{ turnId: string | undefined; blocks: TraceBlock[] }> = [];
+  for (const block of blocks) {
+    const last = groups[groups.length - 1];
+    if (!last || last.turnId !== block.turnId) {
+      groups.push({ turnId: block.turnId, blocks: [block] });
+    } else {
+      last.blocks.push(block);
+    }
   }
+  return groups;
 }
 
-export function ExecutionTracePanel({ traceEvents, turnStatuses }: ExecutionTracePanelProps) {
-  const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
+export function ExecutionTracePanel({ traceBlocks, turnStatuses }: ExecutionTracePanelProps) {
+  const [verboseMode, setVerboseMode] = useState(false);
 
-  const stageCount = useMemo(() => {
-    const counter: Record<string, number> = {};
-    for (const evt of traceEvents) {
-      counter[evt.stage] = (counter[evt.stage] || 0) + 1;
-    }
-    return counter;
-  }, [traceEvents]);
+  const turnGroups = useMemo(() => groupByTurn(traceBlocks), [traceBlocks]);
 
-  // 按 turnId 分组，保留原始顺序
-  const groupedEvents = useMemo(() => {
-    const groups: Array<{ turnId: string | undefined; events: TraceEvent[] }> = [];
-    for (const evt of traceEvents) {
-      const last = groups[groups.length - 1];
-      if (!last || last.turnId !== evt.turnId) {
-        groups.push({ turnId: evt.turnId, events: [evt] });
-      } else {
-        last.events.push(evt);
-      }
-    }
-    return groups;
-  }, [traceEvents]);
+  const visibleGroups = useMemo(() => {
+    if (verboseMode) return turnGroups;
+    return turnGroups.map((group) => ({
+      ...group,
+      blocks: group.blocks.filter((b) => USER_VISIBLE_BLOCKS.has(b.type)),
+    }));
+  }, [turnGroups, verboseMode]);
 
-  const toggle = (id: string) => {
-    setOpenIds((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  const blockCount = useMemo(() => traceBlocks.length, [traceBlocks]);
+  const turnCount = useMemo(() => turnGroups.length, [turnGroups]);
 
   return (
     <div className="flex h-full flex-col" data-testid="execution-trace-panel">
       <div className="border-b border-border p-4 bg-background-alt">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          <h2 className="font-semibold text-text-primary">执行链路明细</h2>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary" />
+            <h2 className="font-semibold text-text-primary">执行链路</h2>
+          </div>
+          <button
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+            onClick={() => setVerboseMode(!verboseMode)}
+          >
+            {verboseMode ? (
+              <>
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>简洁</span>
+              </>
+            ) : (
+              <>
+                <Eye className="w-3.5 h-3.5" />
+                <span>详细</span>
+              </>
+            )}
+          </button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          {traceEvents.length} 个事件 · {Object.keys(stageCount).length} 个阶段
+          {blockCount} 个步骤 · {turnCount} 轮对话
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        <section className="rounded-xl border border-border bg-bg-card">
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <Database className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium text-text-primary">事件流水</span>
+        {traceBlocks.length === 0 ? (
+          <div className="px-3 py-8 text-center text-sm text-text-muted">
+            暂无链路事件
           </div>
+        ) : (
+          <div className="space-y-4">
+            {visibleGroups.map((group, groupIdx) => {
+              const turnNumber = group.turnId
+                ? parseInt(group.turnId.replace('turn_', ''), 10)
+                : null;
+              const firstBlock = group.blocks[0];
+              const status = group.turnId && turnStatuses?.[group.turnId]
+                ? turnStatuses[group.turnId]
+                : null;
 
-          {traceEvents.length === 0 ? (
-            <div className="px-3 py-8 text-center text-sm text-text-muted">
-              暂无链路事件
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {groupedEvents.map((group, groupIdx) => {
-                const turnNumber = group.turnId
-                  ? parseInt(group.turnId.replace('turn_', ''), 10)
-                  : null;
-                const firstEvent = group.events[0];
-
-                return (
-                  <div key={group.turnId ?? `pre_${groupIdx}`}>
-                    {/* Turn 分隔线 */}
-                    <div
-                      data-testid="turn-divider"
-                      className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/20"
-                    >
-                      <div className="flex-1 h-px bg-border" />
-                      <span className="text-[11px] text-text-muted px-2 shrink-0">
-                        {turnNumber !== null
-                          ? `Turn #${turnNumber}  ${formatTime(firstEvent?.timestamp ?? '')}`
-                          : 'Pre-session'}
+              return (
+                <div key={group.turnId ?? `pre_${groupIdx}`}>
+                  <div
+                    data-testid="turn-divider"
+                    className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border border-primary/20 rounded-lg mb-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-primary">
+                        {turnNumber !== null ? `Turn #${turnNumber}` : 'Pre-session'}
                       </span>
-                      <div className="flex-1 h-px bg-border" />
+                      <span className="text-[11px] text-text-muted">
+                        {formatTime(firstBlock?.timestamp ?? '')}
+                      </span>
                     </div>
-
-                    {/* 该 Turn 的事件列表 */}
-                    {group.events.map((evt, idx) => {
-                      if (evt.stage === 'tools') {
-                        return (
-                          <ToolCallCard
-                            key={evt.id}
-                            toolName={String(evt.payload.tool_name ?? evt.step)}
-                            status={evt.status as 'start' | 'ok' | 'error' | 'skip'}
-                            args={evt.payload.args as Record<string, unknown> | undefined}
-                            contentPreview={evt.payload.content_preview as string | undefined}
-                            contentLength={evt.payload.content_length as number | undefined}
-                            errorMessage={evt.payload.error as string | undefined}
-                            timestamp={evt.timestamp}
-                          />
-                        );
-                      }
-
-                      const expanded = !!openIds[evt.id];
-                      return (
-                        <motion.div
-                          key={evt.id}
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.12, delay: Math.min(0.3, idx * 0.01) }}
-                          className="px-3 py-2"
-                        >
-                          <button
-                            className="w-full text-left"
-                            onClick={() => toggle(evt.id)}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                {expanded ? (
-                                  <ChevronDown className="w-3 h-3 text-text-muted shrink-0" />
-                                ) : (
-                                  <ChevronRight className="w-3 h-3 text-text-muted shrink-0" />
-                                )}
-                                <span className="text-xs px-1.5 py-0.5 rounded bg-bg-muted text-text-muted shrink-0">
-                                  {STAGE_LABELS[evt.stage] ?? evt.stage}
-                                </span>
-                                <span className="text-sm text-text-primary truncate">
-                                  {evt.step}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span
-                                  className={cn(
-                                    'text-[11px] px-1.5 py-0.5 rounded',
-                                    STATUS_STYLES[evt.status] ?? 'bg-bg-muted text-text-muted'
-                                  )}
-                                >
-                                  {evt.status}
-                                </span>
-                                <span className="text-[11px] text-text-muted">
-                                  {formatTime(evt.timestamp)}
-                                </span>
-                              </div>
-                            </div>
-                          </button>
-
-                          {expanded && (
-                            <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-bg-muted p-2 text-xs text-text-secondary">
-                              {prettyJson(evt.payload)}
-                            </pre>
-                          )}
-                        </motion.div>
-                      );
-                    })}
-
-                    {/* Turn 完成/失败 badge */}
-                    {group.turnId && turnStatuses?.[group.turnId] && (
-                      <div className={`px-3 py-1 text-xs ${
-                        turnStatuses[group.turnId] === 'done'
-                          ? 'text-success-text'
-                          : 'text-error-text'
-                      }`}>
-                        {turnStatuses[group.turnId] === 'done'
-                          ? `✓ Turn #${turnNumber} 完成 · ${group.events.length} 个事件`
-                          : `✗ Turn #${turnNumber} 失败`}
-                      </div>
+                    {status && (
+                      <span className={cn(
+                        'text-[11px] px-1.5 py-0.5 rounded',
+                        status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700',
+                      )}>
+                        {status === 'done' ? '完成' : '失败'}
+                      </span>
                     )}
+                    <div className="flex-1" />
+                    <span className="text-[11px] text-text-muted">
+                      {group.blocks.length} 个步骤
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+
+                  <div className="ml-2 border-l-2 border-border pl-3 space-y-2">
+                    {group.blocks.map((block) => (
+                      <TraceBlockCard key={block.id} block={block} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-

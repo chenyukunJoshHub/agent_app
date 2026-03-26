@@ -108,6 +108,7 @@ export default function HomePage() {
     messages,
     isLoading,
     traceEvents,
+    traceBlocks,
     slotDetails,
     contextWindowData,
     stateMessages,
@@ -542,7 +543,11 @@ export default function HomePage() {
               className="h-full"
             >
               {activeTab === 'chain' && (
-                <ExecutionTracePanel traceEvents={traceEvents} turnStatuses={turnStatuses} />
+                <ExecutionTracePanel
+                  traceEvents={traceEvents}
+                  traceBlocks={traceBlocks}
+                  turnStatuses={turnStatuses}
+                />
               )}
               {activeTab === 'context' && (
                 <ContextPanel
