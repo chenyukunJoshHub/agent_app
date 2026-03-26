@@ -308,8 +308,6 @@ class TestProceduralInjection:
             middleware.wrap_model_call(request, lambda r: MagicMock())
         slot_names_called = []
         for c in mock_emit.call_args_list:
-            if c.args:
-                slot_names_called.append(c.args[0] if len(c.args) > 0 else None)
             if c.kwargs:
                 slot_names_called.append(c.kwargs.get("name"))
         assert "procedural" in slot_names_called
@@ -324,9 +322,8 @@ class TestProceduralInjection:
         ) as mock_emit:
             middleware.wrap_model_call(request, lambda r: MagicMock())
         for call in mock_emit.call_args_list:
-            args = call.args
             kwargs = call.kwargs
-            name = args[0] if args else kwargs.get("name", "")
+            name = kwargs.get("name", "")
             enabled = kwargs.get("enabled", True)
             if name == "procedural":
                 assert enabled is False, "procedural enabled 应为 False when empty"
