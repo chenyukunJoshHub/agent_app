@@ -11,6 +11,7 @@ Convention:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from app.memory.schemas import MemoryContext
 
@@ -22,8 +23,8 @@ class BaseInjectionProcessor(ABC):
     Register the instance in MemoryManager(processors=[...]).
     """
 
-    slot_name: str     # Must match a slot name in ContextPanel
-    display_name: str  # Human-readable label shown in ContextPanel (required by emit_slot_update)
+    slot_name: ClassVar[str]      # Must match a slot name in ContextPanel
+    display_name: ClassVar[str]   # Human-readable label shown in ContextPanel (required by emit_slot_update)
 
     @abstractmethod
     def build_prompt(self, ctx: MemoryContext) -> str:
