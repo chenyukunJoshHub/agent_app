@@ -1,31 +1,29 @@
 /**
- * AssistantRoot - assistant-ui 根容器自定义
- * 匹配设计系统的主题和样式
+ * AssistantRoot — structural wrapper for the thread.
+ *
+ * Uses ThreadPrimitive.Root for assistant-ui runtime context.
  */
-
 'use client';
 
-import { Root as AssistantUIRoot } from '@assistant-ui/react';
+import { ThreadPrimitive } from '@assistant-ui/react';
 import { cn } from '@/lib/utils';
 
-interface AssistantRootProps extends React.ComponentProps<typeof AssistantUIRoot> {}
+interface AssistantRootProps {
+  className?: string;
+  children?: React.ReactNode;
+}
 
-export function AssistantRoot({ className, ...props }: AssistantRootProps) {
+export function AssistantRoot({ className, children }: AssistantRootProps) {
   return (
-    <AssistantUIRoot
+    <ThreadPrimitive.Root
       className={cn(
-        // 基础布局
-        'flex h-screen flex-col bg-bg-base text-text-primary',
-
-        // Focus 状态
+        'flex h-full flex-col bg-bg-base text-text-primary',
         'focus-within:ring-2 focus-within:ring-primary/20 focus-within:ring-inset',
-
-        // 平滑过渡
         'transition-all duration-200',
-
-        className
+        className,
       )}
-      {...props}
-    />
+    >
+      {children}
+    </ThreadPrimitive.Root>
   );
 }

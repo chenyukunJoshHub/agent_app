@@ -70,3 +70,40 @@
 - [ ] findings.md 中记录技术决策
 - [ ] progress.md 更新本阶段会话日志
 - [ ] task_plan.md 阶段状态更新为 ✅ done
+
+---
+
+## Phase 21 — 记忆写回双策略（B/C）+ Retain 轻量落地
+
+### 测试用例清单（TDD 先写）
+
+#### Settings（新增配置）
+- [x] `memory_profile_update_mode` 默认值为 `rule`
+- [x] `memory_profile_llm_interval` 默认值为 `10`
+- [x] `memory_profile_opinion_min_confidence` 默认值为 `0.9`
+- [x] `memory_profile_llm_interval < 1` 时校验失败
+- [x] `memory_profile_opinion_min_confidence` 超出 `[0,1]` 时校验失败
+
+#### MemoryManager.save_episodic()
+- [x] 调用 `save_episodic` 会真实写入 `store.aput`
+- [x] `namespace=("profile", user_id), key="episodic"` 正确
+- [x] 重复写入时后写覆盖前写
+
+#### MemoryMiddleware.abefore_agent()
+- [x] 返回 `memory_ctx` 同时写入 `memory_ctx_baseline`
+- [x] baseline 与加载到的原始 `episodic` 一致
+
+#### MemoryMiddleware.aafter_agent() — rule 模式
+- [x] `interaction_count +1`
+- [x] 规则提炼 language/domain 生效
+- [x] 画像变化时触发 `save_episodic`
+- [x] 画像无变化时不写库（dirty flag）
+
+#### MemoryMiddleware.aafter_agent() — llm 模式
+- [x] 非第 N 轮跳过 LLM 提炼
+- [x] 第 N 轮执行 LLM 提炼并合并 `preferences + summary`
+- [x] LLM 异常或解析失败时回退 rule 结果，不抛错
+
+#### Retain 轻量落地（C 模式）
+- [x] summary 含 `W/B/O/S` 结构化行
+- [x] `O(c=...)` 仅当 `c >= memory_profile_opinion_min_confidence` 才写入 preferences

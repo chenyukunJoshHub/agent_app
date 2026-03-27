@@ -824,6 +824,138 @@ Tool ↔ HIL 模块
 
 ---
 
+### 1.4 Task Orchestration v1（2026-03-27 增量）
+
+> 目标：从“只会调工具”的 ReAct 执行，升级为“会规划、会重规划、会检索”的任务级控制闭环。
+
+#### 1.4.1 新增模块
+
+```
+app/planner/orchestrator.py
+  ├─ TaskPlanner
+  │   · create_plan(session_id, user_goal, history)
+  │   · 复杂任务（>=3 步）规则分解
+  │   · 轻量关键词检索 retrieval_hits（长上下文证据）
+  │
+  ├─ Replanner
+  │   · should_replan(plan, error)
+  │   · apply(plan, failed_step_id, error) 失败后追加恢复步骤
+  │
+  └─ TaskRuntimeStore
+      · set/get_plan
+      · mark_next_step_running
+      · mark_running_step_succeeded / failed
+      · should_replan / apply_replan
+      · mark_plan_completed
+```
+
+#### 1.4.2 PlanState 与步骤状态机
+
+```
+PlanState:
+  plan_id, session_id, user_goal, complexity(simple|complex),
+  steps[], retrieval_hits[], current_step_index, replan_count, max_replans
+
+PlanStep.status:
+  pending -> running -> succeeded
+                 └-> failed -> (replanner) -> pending(恢复步骤)
+```
+
+关键约束：
+
+1. `mark_running_step_succeeded/failed` 仅允许在存在 RUNNING 步骤时调用；无 RUNNING 时抛错（防止非法状态迁移）。
+2. `replan_count` 达上限后不再重规划，直接走错误收敛。
+3. `mark_plan_completed` 在 turn 完成时补齐剩余 pending，避免“计划悬空”。
+
+#### 1.4.3 执行链路增量（_execute_agent）
+
+```
+try astream()
+  ├─ tool_start  -> TaskRuntimeStore.mark_next_step_running()
+  ├─ tool_result -> TaskRuntimeStore.mark_running_step_succeeded()
+  └─ done        -> TaskRuntimeStore.mark_plan_completed()
+
+except Exception as e
+  ├─ should_replan(session, e) == True
+  │    -> emit trace_event: replanner/triggered
+  │    -> apply_replan(session, e)
+  │    -> emit trace_event: replanner/plan_updated
+  │    -> retry once（当前 max_replans=1）
+  └─ else
+       -> emit error（终止）
+```
+
+这使“工具失败”从“直接报错结束”升级为“可控自愈（重规划后再试）”。
+
+#### 1.4.4 SSE / 前端可视化增量
+
+后端新增 trace stage：
+
+| stage | step | 含义 |
+|------|------|------|
+| `planner` | `plan_created` / `plan_completed` | 计划创建与收敛 |
+| `retrieval` | `context_retrieved` | 长上下文证据检索 |
+| `replanner` | `triggered` / `plan_updated` | 失败触发重规划与更新结果 |
+
+`TraceBlockBuilder` 新增 block 类型：
+
+- `planning`
+- `retrieval`
+- `replanning`
+
+前端 `ExecutionTracePanel` + `TraceBlockCard` 已支持上述类型，用户可直接看到“规划→检索→执行→重规划”全链路，不再是黑盒。
+
+#### 1.4.5 评测与验收（本轮新增测试）
+
+1. 复杂任务分解：`tests/backend/unit/planner/test_task_orchestration.py`
+2. 故障触发重规划：`tests/backend/unit/api/test_chunk_processing.py::TestExecuteAgentReplan`
+3. 长上下文对比基线：`tests/backend/integration/planner/test_long_context_success_baseline.py`
+4. trace 可视化块回归：`tests/backend/unit/observability/test_trace_block_builder.py::TestPlannerBlocks`
+5. 计划持久化恢复：`tests/backend/unit/planner/test_task_runtime_persistence.py`
+
+#### 1.4.6 Planner 策略模式（rule / llm / hybrid）
+
+```
+settings.task_planner_mode:
+  rule    -> 仅规则分解（默认，最稳定）
+  llm     -> 优先走 LLM 结构化规划；失败自动回退 rule
+  hybrid  -> 与 llm 相同（保留为策略别名，便于灰度）
+```
+
+LLM 规划输出约束：
+
+1. 必须输出 JSON：`{ complexity, steps[] }`
+2. `steps[].depends_on` 只能引用前序步骤索引（防循环依赖）
+3. 超过 `task_planner_max_steps` 的步骤会被截断
+4. 任一校验失败（超时/非 JSON/空步骤）立即回退规则规划，不中断主链路
+
+这保证了“智能化”与“稳定性”同时成立：能用 LLM 时更智能，不能用时不掉线。
+
+#### 1.4.7 TaskRuntimeStore 持久化（Postgres Store）
+
+```
+TaskRuntimeStore
+  内存层：
+    _plans[session_id] 作为热缓存（低延迟）
+
+  持久层（可选）：
+    AsyncPostgresStore namespace=("task_plans",), key=session_id
+    value=PlanState 序列化 JSON（含 steps/status/replan_count）
+```
+
+读写策略：
+
+1. 读取：`aload_plan(session_id)` 先查内存，未命中再查 Postgres 并回填缓存。  
+2. 写入：`aset_plan / amark_* / aapply_replan / amark_plan_completed` 每次状态变更后落盘。  
+3. 降级：若 `get_store()` 不可用，自动进入 memory-only 模式（不阻断主链路）。
+
+效果：
+
+- 进程重启后可从 `task_plans` 恢复计划状态，不再丢失中间步骤；
+- 与 HIL/幂等机制配合后，任务级状态具备“可恢复、可追踪、可自愈”闭环。
+
+---
+
 ## 第二层：LangChain 实现映射
 
 > 标注：✅ 框架内置 · 🔧 自行开发 · ⚡ 胶水代码

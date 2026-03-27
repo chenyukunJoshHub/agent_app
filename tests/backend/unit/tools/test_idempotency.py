@@ -149,3 +149,14 @@ class TestIdempotencyStoreEdgeCases:
         store.clear()
         store.clear()
         assert store.check_and_mark("key_a") is False
+
+    def test_discard_removes_marked_key(self) -> None:
+        store = IdempotencyStore()
+        assert store.check_and_mark("rollback_key") is False
+        store.discard("rollback_key")
+        assert store.check_and_mark("rollback_key") is False
+
+    def test_discard_missing_key_is_noop(self) -> None:
+        store = IdempotencyStore()
+        store.discard("missing_key")
+        assert store.check_and_mark("missing_key") is False

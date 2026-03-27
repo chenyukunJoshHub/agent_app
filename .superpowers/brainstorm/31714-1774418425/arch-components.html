@@ -1,0 +1,95 @@
+<h2>组件结构 & 文件变更</h2>
+<p class="subtitle">方案 A — 全量重写</p>
+
+<div class="section">
+  <h3>文件变更清单</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
+
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px">
+      <div style="font-weight:700;color:#991b1b;margin-bottom:8px;font-size:12px">🗑 删除 / 大幅缩减</div>
+      <ul style="font-size:11px;color:#7f1d1d;line-height:2;margin:0;padding-left:14px">
+        <li><code>ContextWindowPanel.tsx</code> — 替换为新组件</li>
+        <li><code>SlotDetail.tsx</code> — 逻辑并入新 SlotCardsSection</li>
+        <li><code>SlotBar.tsx</code> — 逻辑并入新 TokenMapSection</li>
+        <li><code>CompressionLog.tsx</code> — 暂时移除（设计稿无此区块）</li>
+      </ul>
+    </div>
+
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px">
+      <div style="font-weight:700;color:#166534;margin-bottom:8px;font-size:12px">✨ 新增</div>
+      <ul style="font-size:11px;color:#14532d;line-height:2;margin:0;padding-left:14px">
+        <li><code>ContextPanel.tsx</code> — 新主组件（根容器）</li>
+        <li><code>SessionMetadataSection.tsx</code> — 模块一</li>
+        <li><code>TokenMapSection.tsx</code> — 模块二</li>
+        <li><code>SlotCardsSection.tsx</code> — 模块三</li>
+        <li><code>types/context-window.ts</code> — 新增 SessionMeta 类型</li>
+      </ul>
+    </div>
+
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px">
+      <div style="font-weight:700;color:#1e40af;margin-bottom:8px;font-size:12px">✏️ 修改</div>
+      <ul style="font-size:11px;color:#1e3a8a;line-height:2;margin:0;padding-left:14px">
+        <li><code>page.tsx</code> — 替换 ContextWindowPanel → ContextPanel，新增 sessionMeta state</li>
+        <li><code>store/use-session.ts</code> — 新增 sessionMeta 字段</li>
+        <li><code>backend/app/api/context.py</code> — 新增 session_metadata SSE 事件</li>
+      </ul>
+    </div>
+
+    <div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:12px">
+      <div style="font-weight:700;color:#854d0e;margin-bottom:8px;font-size:12px">⚠️ 注意</div>
+      <ul style="font-size:11px;color:#78350f;line-height:2;margin:0;padding-left:14px">
+        <li>CompressionLog 设计稿无对应区块，先移除</li>
+        <li>旧测试（ContextWindowPanel）需要更新</li>
+        <li>SlotBar/CompressionLog 组件保留文件，由调用方决定是否删除</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>组件树</h3>
+  <div style="background:#1e293b;border-radius:10px;padding:16px;font-family:monospace;font-size:12px;line-height:2;color:#e2e8f0">
+    <div style="color:#60a5fa">ContextPanel</div>
+    <div style="padding-left:20px;color:#94a3b8">├── props: sessionMeta, contextWindowData, slotDetails, stateMessages</div>
+    <div style="padding-left:20px;color:#94a3b8">│</div>
+    <div style="padding-left:20px;color:#34d399">├── SessionMetadataSection</div>
+    <div style="padding-left:40px;color:#94a3b8">│   └── props: sessionMeta (SSE推送) + 从 contextWindowData/stateMessages 推导</div>
+    <div style="padding-left:20px;color:#94a3b8">│</div>
+    <div style="padding-left:20px;color:#818cf8">├── TokenMapSection</div>
+    <div style="padding-left:40px;color:#94a3b8">│   └── props: budget, slotUsage (from contextWindowData)</div>
+    <div style="padding-left:20px;color:#94a3b8">│</div>
+    <div style="padding-left:20px;color:#2dd4bf">└── SlotCardsSection</div>
+    <div style="padding-left:40px;color:#94a3b8">    └── props: slotDetails, stateMessages</div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>实时更新数据流</h3>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+    <div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="background:#2563EB;color:white;padding:4px 8px;border-radius:4px;font-size:10px;white-space:nowrap">SSE: session_metadata</div>
+      <div style="color:#64748b">→</div>
+      <div style="color:#374151">模型名、会话名、创建时间 <span style="color:#6366f1">(新增后端事件)</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="background:#6366F1;color:white;padding:4px 8px;border-radius:4px;font-size:10px;white-space:nowrap">SSE: context_window</div>
+      <div style="color:#64748b">→</div>
+      <div style="color:#374151">Token 地图 12 档数据、总用量、使用率 <span style="color:#94a3b8">(已有)</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="background:#0D9488;color:white;padding:4px 8px;border-radius:4px;font-size:10px;white-space:nowrap">SSE: slot_details</div>
+      <div style="color:#64748b">→</div>
+      <div style="color:#374151">Slot 卡片内容 <span style="color:#94a3b8">(已有)</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="background:#374151;color:white;padding:4px 8px;border-radius:4px;font-size:10px;white-space:nowrap">SSE: done (payload)</div>
+      <div style="color:#64748b">→</div>
+      <div style="color:#374151">用户/助手消息计数、最后活动时间 <span style="color:#94a3b8">(从 stateMessages 推导)</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="background:#F59E0B;color:white;padding:4px 8px;border-radius:4px;font-size:10px;white-space:nowrap">SSE: token_update</div>
+      <div style="color:#64748b">→</div>
+      <div style="color:#374151">使用率实时刷新 <span style="color:#94a3b8">(已有)</span></div>
+    </div>
+  </div>
+</div>

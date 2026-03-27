@@ -6,6 +6,13 @@ import time
 from datetime import UTC, datetime
 from inspect import isawaitable
 from typing import Any
+from weakref import WeakKeyDictionary
+
+from app.observability.trace_block import TraceBlockBuilder, emit_trace_block
+
+
+_QUEUE_BUILDERS: WeakKeyDictionary[Any, TraceBlockBuilder] = WeakKeyDictionary()
+_FALLBACK_BUILDERS: dict[int, TraceBlockBuilder] = {}
 
 
 def _iso_now() -> str:
@@ -31,6 +38,30 @@ def build_trace_event(
     }
 
 
+def _get_builder(queue: Any) -> TraceBlockBuilder:
+    """Get/create a per-queue TraceBlockBuilder."""
+    try:
+        builder = _QUEUE_BUILDERS.get(queue)
+    except TypeError:
+        builder = _FALLBACK_BUILDERS.get(id(queue))
+    if builder is not None:
+        return builder
+    builder = TraceBlockBuilder()
+    try:
+        _QUEUE_BUILDERS[queue] = builder
+    except TypeError:
+        _FALLBACK_BUILDERS[id(queue)] = builder
+    return builder
+
+
+def _drop_builder(queue: Any) -> None:
+    """Drop per-queue builder once a turn is finished."""
+    try:
+        _QUEUE_BUILDERS.pop(queue, None)
+    except TypeError:
+        _FALLBACK_BUILDERS.pop(id(queue), None)
+
+
 async def emit_trace_event(
     queue: Any | None,
     *,
@@ -42,19 +73,28 @@ async def emit_trace_event(
     """Emit a `trace_event` via SSE queue when queue is available."""
     if queue is None:
         return
+    event = build_trace_event(
+        stage=stage,
+        step=step,
+        status=status,
+        payload=payload,
+    )
     put_result = queue.put(
         (
             "trace_event",
-            build_trace_event(
-                stage=stage,
-                step=step,
-                status=status,
-                payload=payload,
-            ),
+            event,
         )
     )
     if isawaitable(put_result):
         await put_result
+
+    builder = _get_builder(queue)
+    blocks = builder.on_trace_event(event)
+    for block in blocks:
+        await emit_trace_block(queue, block)
+
+    if status == "error" or (stage == "react" and step == "turn_done"):
+        _drop_builder(queue)
 
 
 async def emit_slot_update(

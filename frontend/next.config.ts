@@ -19,6 +19,12 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
+        // Avoid FastAPI 307 redirect (/skills -> /skills/) that can surface as CORS
+        // on non-default frontend ports when browser follows cross-origin redirects.
+        source: '/api/skills',
+        destination: 'http://localhost:8000/skills/',
+      },
+      {
         source: '/api/:path*',
         destination: 'http://localhost:8000/:path*',
       },

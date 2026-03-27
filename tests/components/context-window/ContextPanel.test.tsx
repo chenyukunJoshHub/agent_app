@@ -11,7 +11,7 @@ const mockMeta: SessionMeta = {
 };
 
 describe('ContextPanel', () => {
-  it('应渲染模块一、二、三的 section header', () => {
+  it('应渲染模块一、二、三的主体内容', () => {
     render(
       <ContextPanel
         sessionMeta={mockMeta}
@@ -21,9 +21,9 @@ describe('ContextPanel', () => {
         lastActivityTime={null}
       />
     );
-    expect(screen.getByText(/会话元数据/)).toBeInTheDocument();
-    expect(screen.getByText(/Token 地图/)).toBeInTheDocument();
-    expect(screen.getByText(/Slot 原文/)).toBeInTheDocument();
+    expect(screen.getByText(/会话名称/)).toBeInTheDocument();
+    expect(screen.getByText(/context window Token 占比/)).toBeInTheDocument();
+    expect(screen.getByText(/暂无 Slot 数据/)).toBeInTheDocument();
   });
 
   it('无压缩事件时不应渲染模块四', () => {

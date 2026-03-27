@@ -22,24 +22,24 @@
 | 14 | plan-phase14-slot-token-stats.md | backend/prompt/slot_tracker.py + frontend/ | Prompt v20 §1.2 | ✅ done |
 | 15 | plan-phase15-assistant-ui-redesign.md | frontend/ + assistant-ui | — | 🔄 in progress |
 | 16 | plan-phase16-tool-system-review-fixes.md | backend/tools/ + backend/agent/ + tests/ | Agent v13 §1.12 | ⏳ pending |
+| 21 | plan-phase21-hil-resume-reliability.md | backend/app/api/chat.py + tests/backend/* | Agent v13 §1.13 + Tools v12 §1.3.4 | 🔄 in progress |
+| 22 | — | backend/app/memory/* | Memory v5 | 🔄 user-owned |
+| 23 | plan-phase23-task-orchestration.md | backend/app/planner/ + backend/app/api/chat.py + frontend/trace | Tools v12 §1.4 | ✅ done |
 
 ## 当前状态
 
-**最后更新**: 2026-03-25
+**最后更新**: 2026-03-27
 
-**已完成（2026-03-25）**: Context 右侧面板重设计 ✅
-- 计划文件: `docs/superpowers/plans/2026-03-25-context-panel-redesign.md`
-- 4 个新组件（SessionMetadataSection / TokenMapSection / SlotCardsSection / ContextPanel）
-- 修复实时刷新 bug，新增 session_metadata SSE 事件
-- 26 个新测试全部 GREEN
+**当前阶段**: Phase 21 — HIL Resume 可靠性闭环 🔄
+- 计划文件: `docs/plans/plan-phase21-hil-resume-reliability.md`
+- 已完成：`/chat/resume` 写工具幂等防重 + API/集成测试回归
+- 待完成：checkpoint 原生恢复替换“模拟继续执行”路径
 
-**下一阶段**: Phase 16 — 工具系统审查修复 ⏳ **待开始**
-
-**审查来源**: `docs/review/tool-system-review-2026-03-24.md`（36 项发现）
+**并行说明**: Phase 22（Memory 读写闭环）由用户侧推进（user-owned）
 
 **阻塞项**: 无
 
-**下一阶段**: Phase 16.1 → 16.2 → 16.3
+**下一阶段**: Phase 21 子任务（checkpoint resume）→ Phase 15 集成收尾
 
 ---
 

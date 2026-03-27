@@ -25,5 +25,10 @@ class IdempotencyStore:
         with self._lock:
             self._executed.clear()
 
+    def discard(self, key: str) -> None:
+        """Remove a key from executed set (best-effort rollback on failures)."""
+        with self._lock:
+            self._executed.pop(key, None)
+
 
 __all__ = ["IdempotencyStore"]

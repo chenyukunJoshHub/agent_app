@@ -69,3 +69,20 @@
 - [ ] findings.md 中记录技术决策
 - [ ] progress.md 更新本阶段会话日志
 - [ ] task_plan.md 阶段状态更新为 ✅ done
+
+---
+
+## 2026-03-26 增补：Layer4 执行层（A/B/混合）与 search 契约
+
+### Layer4（执行层）测试补充
+- [x] Path A（并行）：同 step 双工具并发执行，验证时间窗重叠
+- [x] Path B（串行）：跨 step 依赖执行，验证严格先后顺序
+- [x] Path A+B（混合）：先并行读工具，再串行汇总写工具
+- [x] Path C（task_dispatch）不纳入本轮范围（按需求排除）
+- [x] HIL 幂等缺口已修复：`/chat/resume` 对 `send_email` 增加幂等防重执行（Phase 21）
+
+### `search.py` 契约补充
+- [x] 成功与失败返回统一 JSON 契约（可解析）
+- [x] 结果字段稳定：`query/answer/results[].title|url|content`
+- [x] 大结果截断预算（单条与总量）防止上下文污染
+- [x] Tavily 异常分类映射为稳定错误结构（timeout/network/api_error）

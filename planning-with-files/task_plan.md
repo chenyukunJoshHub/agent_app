@@ -27,31 +27,35 @@
 | 12 | HIL 人工介入 | ✅ done | plan-phase12-hil.md |
 | 13 | E2E 测试 | ✅ done | plan-phase13-e2e-tests.md |
 | 14 | Slot Token 实时统计 | ✅ done | plan-phase14-slot-token-stats.md |
-| 15 | assistant-ui 重新设计 | 🔄 in progress | plan-phase15-assistant-ui-redesign.md |
+| 15 | assistant-ui 集成 | ✅ done | plan-phase15-assistant-ui-redesign.md |
 | 16 | Context 右侧面板重设计 | ✅ done | plan-phase16-context-panel-redesign.md |
 | 17 | 内存 Slot 修复 + 用户偏好初始化 | ✅ done | — |
 | 18 | Procedural Memory Injector | ✅ done | docs/superpowers/plans/2026-03-26-procedural-memory-injector.md |
 | 19 | 执行链路明细重设计 | ✅ done | docs/superpowers/plans/2026-03-26-execution-trace-redesign.md |
+| 20 | Layer4 执行层验证 + SSE 生命周期稳定化 | ✅ done | tests/backend/integration/tools/test_execution_layer_ab_mix.py |
+| 21 | HIL Resume 可靠性闭环 | ✅ done | docs/plans/plan-phase21-hil-resume-reliability.md |
+| 22 | Memory 读写闭环 | ✅ done | docs/plans/plan-phase03-memory.md（Phase 21 增量） |
 
 ---
 
 ## 当前状态
 
-**日期**: 2026-03-26
-**当前阶段**: Phase 19 - 执行链路明细重设计
-**阶段状态**: ✅ 已完成
+**日期**: 2026-03-27
+**当前阶段**: Phase 22 — Memory 读写闭环（user-owned） / Phase 21 已完成
+**阶段状态**: 🔄 进行中
 
-### Phase 15 进度
+### Phase 15 — assistant-ui 集成
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 设计系统生成 | ✅ done | UI/UX Pro Max 生成完整设计系统 |
-| 文档编写 | ✅ done | 设计方案文档 + 快速开始指南 |
-| 配置文件生成 | ✅ done | Tailwind + CSS + TypeScript 主题 |
-| 自定义组件生成 | ✅ done | 5 个核心组件（Root/Message/Composer/Thread/Welcome） |
-| 项目计划更新 | ✅ done | 新增 Phase 15 计划文件 |
-| 依赖安装 | ⏳ pending | 等待用户确认 |
-| 集成实施 | ⏳ pending | 等待用户确认 |
+| npm 调研 + 安装 | ✅ done | `@assistant-ui/react@0.12.20`，删除废弃 tailwind config |
+| API 验证 | ✅ done | 确认 primitives 模式，无 shadcn/tailwind-plugin |
+| chat-runtime.ts (ExternalStoreAdapter) | ✅ done | Zustand → ThreadMessageLike 桥接 |
+| useSSEHandlers hook | ✅ done | 从 page.tsx 提取全部 SSE handler（12 个事件） |
+| ChatProvider | ✅ done | AssistantRuntimeProvider 包装器 |
+| 5 个 Wrapper 组件重写 | ✅ done | 适配 Thread/Message/Composer primitives API |
+| page.tsx 重构 | ✅ done | 617→330 行，移除 SSE 内联逻辑 |
+| 构建验证 | ✅ done | `next build` 通过，lint 无新增错误 |
 
 ### Phase 16 进度
 
@@ -114,6 +118,46 @@
 
 ---
 
+## Phase 20 — Layer4 执行层验证 + SSE 生命周期稳定化
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| Layer4 A/B/混合确定性测试 | ✅ done | 新增 `test_execution_layer_ab_mix.py`，验证并行/串行/混合 |
+| HIL 幂等缺口固化 | ✅ done | `/chat/resume` 写工具幂等缺口用 `xfail(strict=True)` 固化 |
+| `search.py` 契约增强 | ✅ done | 成功/失败统一 JSON，异常分类，结果截断预算 |
+| 后端工具测试回归 | ✅ done | `unit/tools + integration/tools` 全量通过（含 1 xfail） |
+| SSE 正常关闭误报修复 | ✅ done | 前端不再将终止后 CLOSED 视为重连错误 |
+| SSE 生命周期日志清晰化 | ✅ done | done/hil/error/timeout 终止原因区分 |
+| E2E 09/10 最小冒烟重跑 | ⏳ pending | 需在当前修复后再次验证 |
+
+---
+
+## Phase 21 — HIL Resume 可靠性闭环
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| 移除 HIL 幂等 xfail | ✅ done | `test_execution_layer_ab_mix.py` 不再依赖 xfail |
+| `/chat/resume` 幂等防重 | ✅ done | `send_email` 批准路径按幂等键去重 |
+| API 单测补充 | ✅ done | 新增同 payload 去重与不同 payload 执行测试 |
+| 工具回归 | ✅ done | `unit/tools + integration/tools + unit/api/test_chat.py` 全绿 |
+| checkpoint 真实恢复 | ✅ done | `thread_id + Command(resume=...)` 原生恢复，移除 synthetic approve/reject 分支 |
+
+---
+
+## Phase 22 — Memory 读写闭环（B/C + Retain）
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| 配置项落地 | ✅ done | 新增 `MEMORY_PROFILE_UPDATE_MODE/LLM_INTERVAL/OPINION_MIN_CONFIDENCE` |
+| `save_episodic` 实装 | ✅ done | `MemoryManager.save_episodic` 改为真实 `store.aput` |
+| baseline + dirty flag | ✅ done | `abefore_agent` 记录 baseline，`aafter_agent` 差异写回 |
+| B 模式规则提炼 | ✅ done | `interaction_count +1` + `language/domain` 提炼 |
+| C 模式周期提炼 | ✅ done | `llm` 模式按 `N=10` 轮触发，失败自动回退 B |
+| Retain 轻量格式 | ✅ done | `summary` 写入 `W/B/O/S`，`O(c)` 阈值控制偏好合并 |
+| TDD 用例与集成验证 | ✅ done | 新增/更新 unit+integration 测试，核心链路全绿 |
+
+---
+
 ## 阻塞项
 
 **当前无阻塞项**
@@ -122,16 +166,16 @@
 
 ## 遗留技术债务
 
-- `save_episodic` 仍为 P0 stub，P2 实现待规划
-- `save_procedural` / `load_procedural` 缺少单元测试（已有接口，未覆盖）
-- Phase 15（assistant-ui 集成）依赖安装与集成实施等待用户确认
+- `save_procedural` / `load_procedural` 仍缺完整单测覆盖
+- C 模式提炼提示词与输出 schema 需线上观测与回归评估（漂移/成本）
+- assistant-ui 消息层仍使用自定义 MessageList（未迁移到 MessagePrimitive.Content 渲染）
 
 ---
 
 ## 下一阶段
 
-1. **完成 Phase 15** - assistant-ui 集成
-2. **生产准备** - 性能优化、安全加固、CI/CD 配置
+1. **assistant-ui 消息层迁移** - 将 MessageList 迁移到 MessagePrimitive.Content + 自定义 part renderers
+2. **Memory C 模式质量评估** - 提炼准确率/成本/漂移观测
 
 ---
 
@@ -142,10 +186,12 @@
 | 后端核心完成 | 2026-03-20 | ✅ |
 | 前端基础完成 | 2026-03-22 | ✅ |
 | 全链路可视化完成 | 2026-03-23 | ✅ |
-| UI 重新设计 | 2026-03-24 | 🔄 |
+| UI 重新设计 | 2026-03-24 | ✅ |
+| assistant-ui 集成 | 2026-03-27 | ✅ |
 | Context 面板重设计 | 2026-03-25 | ✅ |
 | Procedural Memory 注入 | 2026-03-26 | ✅ |
 | 执行链路明细重设计 | 2026-03-26 | ✅ |
+| Layer4 执行层验证 + SSE 稳定化 | 2026-03-26 | ✅ |
 | 生产部署 | 待定 | ⏳ |
 
 ---
@@ -185,4 +231,4 @@
 
 ---
 
-*最后更新: 2026-03-26*
+*最后更新: 2026-03-27（同步：Phase 21 最终收口）*

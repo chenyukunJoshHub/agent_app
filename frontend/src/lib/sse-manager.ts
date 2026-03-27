@@ -84,6 +84,8 @@ export class SSEManager {
   // Store connection parameters for reconnection
   private baseUrl: string | null = null;
   private currentOptions: ConnectionOptions | null = null;
+  private userInitiatedDisconnect = false;
+  private terminalEventReceived = false;
 
   constructor(options?: { maxReconnectAttempts?: number; baseReconnectDelay?: number }) {
     this.maxReconnectAttempts = options?.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
@@ -115,6 +117,8 @@ export class SSEManager {
 
     // Close existing connection
     this.disconnect();
+    this.userInitiatedDisconnect = false;
+    this.terminalEventReceived = false;
 
     // Set state to connecting
     this.setState('connecting');
@@ -132,17 +136,31 @@ export class SSEManager {
    * Set up EventSource listeners.
    */
   private setupListeners() {
-    if (!this.eventSource) return;
+    const source = this.eventSource;
+    if (!source) return;
 
     // Connection events
-    this.eventSource.onopen = () => {
+    source.onopen = () => {
+      if (this.eventSource !== source) {
+        return;
+      }
       console.log('[SSE] Connected');
       this.reconnectAttempts = 0;
       this.setState('connected');
     };
 
-    this.eventSource.onerror = (error) => {
-      const readyState = this.eventSource?.readyState;
+    source.onerror = (error) => {
+      if (this.eventSource !== source) {
+        console.debug('[SSE] Ignoring onerror from stale EventSource');
+        return;
+      }
+
+      if (this.userInitiatedDisconnect) {
+        console.debug('[SSE] Ignoring onerror after manual disconnect');
+        return;
+      }
+
+      const readyState = source.readyState;
       const stateName =
         readyState === EventSource.CONNECTING
           ? 'CONNECTING'
@@ -156,6 +174,13 @@ export class SSEManager {
       if (readyState === EventSource.OPEN) {
         // Browser fires onerror when the server closes the stream normally — not a real error
         console.debug('[SSE] stream ended (readyState: OPEN)');
+        return;
+      }
+
+      if (readyState === EventSource.CLOSED && this.terminalEventReceived) {
+        // Single-request SSE endpoints close after done/error/hil interrupt.
+        console.debug('[SSE] Stream closed after terminal event');
+        this.disconnect();
         return;
       }
 
@@ -178,7 +203,7 @@ export class SSEManager {
 
     // Message events (type-specific)
     for (const eventType of EVENT_TYPES) {
-      this.eventSource.addEventListener(eventType, (e) => {
+      source.addEventListener(eventType, (e) => {
         this.handleEventMessage(eventType, e as MessageEvent);
       });
     }
@@ -198,6 +223,9 @@ export class SSEManager {
       }
 
       const data = JSON.parse(event.data);
+      if (eventType === 'done' || eventType === 'error' || eventType === 'hil_interrupt') {
+        this.terminalEventReceived = true;
+      }
       this.emit(eventType, data);
     } catch (err) {
       console.error(`[SSE] Failed to parse ${eventType}:`, err);
@@ -259,6 +287,7 @@ export class SSEManager {
    * Disconnect SSE connection and reset state.
    */
   disconnect() {
+    this.userInitiatedDisconnect = true;
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;

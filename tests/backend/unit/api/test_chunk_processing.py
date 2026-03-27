@@ -3,7 +3,8 @@ Unit tests for LangGraph chunk processing in _execute_agent.
 
 These tests verify that astream chunks are correctly parsed and converted to SSE events.
 """
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
@@ -339,6 +340,62 @@ class TestToolCallDetection:
             mock_queue.task_done()
 
         assert len(events) > 0
+
+
+class TestExecuteAgentReplan:
+    """_execute_agent 在工具失败后的重规划行为。"""
+
+    @pytest.mark.asyncio
+    async def test_execute_agent_should_replan_on_first_failure_and_then_succeed(self) -> None:
+        """
+        第一次流执行抛错后，应触发 replan，再次执行成功并输出 done。
+        """
+        mock_agent = MagicMock()
+        mock_queue = SSEEventQueue()
+
+        call_count = {"n": 0}
+
+        async def mock_stream(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("tool failed: timeout")
+            yield ("messages", (AIMessageChunk(content="replanned success"), {}))
+
+        mock_agent.astream = mock_stream
+        mock_agent.aget_state = MagicMock(
+            return_value=SimpleNamespace(values={"messages": [AIMessage(content="ok")]})
+        )
+
+        # 轻量 runtime mock：第一次失败允许重规划一次
+        runtime = MagicMock()
+        runtime.should_replan.return_value = True
+        runtime.apply_replan.return_value = {
+            "replan_count": 1,
+            "reason": "tool timeout",
+        }
+
+        await _execute_agent(
+            mock_agent,
+            "复杂任务测试",
+            {},
+            mock_queue,
+            user_id="dev_user",
+            tools_logger=MagicMock(),
+            sse_logger=MagicMock(),
+            planner_runtime=runtime,
+            session_id="s_replan_1",
+        )
+
+        events = []
+        while not mock_queue._queue.empty():
+            event = await mock_queue.get()
+            events.append(event)
+            mock_queue.task_done()
+
+        event_types = [e[0] for e in events]
+        assert "done" in event_types
+        assert "error" not in event_types
+        assert call_count["n"] == 2
 
     @pytest.mark.asyncio
     async def test_detect_multiple_tool_calls(self) -> None:

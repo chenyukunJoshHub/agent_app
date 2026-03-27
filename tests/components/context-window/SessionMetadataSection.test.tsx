@@ -17,7 +17,7 @@ const mockMessages: StateMessage[] = [
 ];
 
 describe('SessionMetadataSection', () => {
-  it('应渲染模块一蓝色色条', () => {
+  it('应渲染会话元数据标签', () => {
     render(
       <SessionMetadataSection
         sessionMeta={mockMeta}
@@ -26,7 +26,8 @@ describe('SessionMetadataSection', () => {
         lastActivityTime={null}
       />
     );
-    expect(screen.getByTestId('module1-accent')).toBeInTheDocument();
+    expect(screen.getByText('会话名称')).toBeInTheDocument();
+    expect(screen.getByText('上下文限制')).toBeInTheDocument();
   });
 
   it('应显示模型名称', () => {

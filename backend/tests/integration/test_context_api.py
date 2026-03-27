@@ -47,8 +47,8 @@ class TestContextAPIIntegration:
         assert slots["system"] == 2000
         assert slots["episodic"] == 500
         assert slots["tools"] == 1200
-        # history = input_budget - (system + active_skill + few_shot + rag + episodic + procedural + tools)
-        # history = 24576 - (2000 + 0 + 0 + 0 + 500 + 0 + 1200) = 20876
+        # history = input_budget - (system + skill_registry + skill_protocol + few_shot + rag + episodic + procedural + tools + output_format)
+        # history = 24576 - (2000 + 0 + 0 + 0 + 0 + 500 + 0 + 1200 + 0) = 20876
         assert slots["history"] == 20876
 
         # Check usage

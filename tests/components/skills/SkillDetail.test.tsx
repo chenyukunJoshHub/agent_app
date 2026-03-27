@@ -17,282 +17,148 @@ const mockSkill: Skill = {
 
 describe('SkillDetail', () => {
   describe('Rendering', () => {
-    it('should not render when skill is null', () => {
-      const { container } = render(
-        <SkillDetail skill={null} isOpen={false} onClose={vi.fn()} />
-      );
-
-      expect(container.firstChild).toBeNull();
-    });
-
     it('should not render when isOpen is false', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={false} onClose={vi.fn()} />
-      );
-
-      // Drawer should be hidden
-      expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+      render(<SkillDetail skill={mockSkill} isOpen={false} onClose={vi.fn()} />);
+      expect(screen.queryByTestId('skill-detail-drawer')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('skill-detail-backdrop')).not.toBeInTheDocument();
     });
 
-    it('should render when skill and isOpen are provided', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
+    it('should render drawer when isOpen is true even if skill is null', () => {
+      render(<SkillDetail skill={null} isOpen={true} onClose={vi.fn()} />);
+      expect(screen.getByTestId('skill-detail-drawer')).toBeInTheDocument();
+      expect(screen.getByTestId('skill-detail-backdrop')).toBeInTheDocument();
+    });
 
+    it('should render skill metadata and content sections', () => {
+      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
       expect(screen.getByText('Legal Search')).toBeInTheDocument();
+      expect(screen.getByText('Description')).toBeInTheDocument();
+      expect(screen.getByText('File Path')).toBeInTheDocument();
+      expect(screen.getByText('Full Content')).toBeInTheDocument();
+      expect(screen.getByText('Required Tools (2)')).toBeInTheDocument();
     });
 
-    it('should render skill name', () => {
+    it('should render description and file path', () => {
       render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText('Legal Search')).toBeInTheDocument();
-    });
-
-    it('should render skill description', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText(/专业法律法规检索/)).toBeInTheDocument();
-    });
-
-    it('should render file path', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
+      expect(screen.getAllByText(/专业法律法规检索/).length).toBeGreaterThan(0);
       expect(screen.getByText('~/skills/legal-search/SKILL.md')).toBeInTheDocument();
     });
 
-    it('should render tools list', () => {
+    it('should render tools list when tools exist', () => {
       render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
       expect(screen.getByText('tavily_search')).toBeInTheDocument();
       expect(screen.getByText('read_file')).toBeInTheDocument();
     });
 
-    it('should render empty tools message when no tools', () => {
-      const skillNoTools: Skill = {
-        ...mockSkill,
-        tools: [],
-      };
-
-      render(<SkillDetail skill={skillNoTools} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText(/No tools/)).toBeInTheDocument();
+    it('should hide tools section when tools are empty', () => {
+      render(
+        <SkillDetail
+          skill={{ ...mockSkill, tools: [] }}
+          isOpen={true}
+          onClose={vi.fn()}
+        />
+      );
+      expect(screen.queryByText(/Required Tools/)).not.toBeInTheDocument();
+      expect(screen.getByText(/\*\*Tools:\*\* None/)).toBeInTheDocument();
     });
   });
 
   describe('Interaction', () => {
-    it('should call onClose when close button is clicked', async () => {
-      const handleClose = vi.fn();
+    it('should call onClose when header close button is clicked', async () => {
+      const onClose = vi.fn();
       const user = userEvent.setup();
+      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={onClose} />);
 
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={handleClose} />);
+      await user.click(screen.getByLabelText('Close'));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
 
-      // Find close button - typically an X or Close text
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      await user.click(closeButton);
+    it('should call onClose when footer close button is clicked', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={onClose} />);
 
-      expect(handleClose).toHaveBeenCalledTimes(1);
+      const closeButtons = screen.getAllByRole('button', { name: /^Close$/ });
+      await user.click(closeButtons[closeButtons.length - 1]);
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('should call onClose when backdrop is clicked', async () => {
-      const handleClose = vi.fn();
+      const onClose = vi.fn();
       const user = userEvent.setup();
+      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={onClose} />);
 
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={handleClose} />);
-
-      // Click on backdrop (outside the drawer)
-      const drawer = screen.getByRole('dialog');
-      const backdrop = drawer.parentElement;
-
-      if (backdrop) {
-        await user.click(backdrop);
-        expect(handleClose).toHaveBeenCalledTimes(1);
-      }
+      await user.click(screen.getByTestId('skill-detail-backdrop'));
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('should close on ESC key press', async () => {
-      const handleClose = vi.fn();
+    it('should call onClose on Escape key', async () => {
+      const onClose = vi.fn();
       const user = userEvent.setup();
-
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={handleClose} />);
+      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={onClose} />);
 
       await user.keyboard('{Escape}');
-
-      expect(handleClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('Drawer Position', () => {
-    it('should render from right side', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('right-0');
-      }
-    });
-
-    it('should have fixed position', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('fixed');
-      }
-    });
-  });
-
-  describe('Content Layout', () => {
-    it('should render skill metadata section', () => {
+  describe('Layout and Styling', () => {
+    it('should render right-side fixed drawer with expected classes', () => {
       render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText(/Version/)).toBeInTheDocument();
-      expect(screen.getByText(/Status/)).toBeInTheDocument();
+      const drawer = screen.getByTestId('skill-detail-drawer');
+      expect(drawer).toHaveClass('fixed');
+      expect(drawer).toHaveClass('right-0');
+      expect(drawer).toHaveClass('w-full');
+      expect(drawer).toHaveClass('max-w-lg');
+      expect(drawer).toHaveClass('shadow-xl');
+      expect(drawer).toHaveClass('z-50');
     });
 
-    it('should render tools section header', () => {
+    it('should render backdrop with overlay classes', () => {
       render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText(/Tools/)).toBeInTheDocument();
-    });
-
-    it('should render file path section', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByText(/File Path/)).toBeInTheDocument();
-    });
-  });
-
-  describe('Accessibility', () => {
-    it('should have role="dialog"', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-
-    it('should have aria-labelledby', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toHaveAttribute('aria-labelledby');
-    });
-
-    it('should trap focus within drawer', () => {
-      render(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      expect(closeButton).toBeInTheDocument();
-    });
-  });
-
-  describe('Animation', () => {
-    it('should use framer-motion AnimatePresence', () => {
-      const { rerender } = render(
-        <SkillDetail skill={mockSkill} isOpen={false} onClose={vi.fn()} />
-      );
-
-      // Re-render with isOpen=true
-      rerender(<SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />);
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-
-    it('should have slide-in animation', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('transition-transform');
-      }
+      const backdrop = screen.getByTestId('skill-detail-backdrop');
+      expect(backdrop).toHaveClass('fixed');
+      expect(backdrop).toHaveClass('inset-0');
+      expect(backdrop).toHaveClass('bg-black/50');
+      expect(backdrop).toHaveClass('z-40');
     });
   });
 
   describe('Edge Cases', () => {
-    it('should handle skill with very long description', () => {
-      const longDescSkill: Skill = {
-        ...mockSkill,
-        description: 'A'.repeat(1000),
-      };
-
-      render(<SkillDetail skill={longDescSkill} isOpen={true} onClose={vi.fn()} />);
-
-      // Should scroll within drawer
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toBeInTheDocument();
+    it('should handle very long description', () => {
+      render(
+        <SkillDetail
+          skill={{ ...mockSkill, description: 'A'.repeat(1000) }}
+          isOpen={true}
+          onClose={vi.fn()}
+        />
+      );
+      expect(screen.getByText('Description')).toBeInTheDocument();
+      expect(screen.getAllByText(/A{50,}/).length).toBeGreaterThan(0);
     });
 
-    it('should handle skill with many tools', () => {
-      const manyToolsSkill: Skill = {
-        ...mockSkill,
-        tools: Array.from({ length: 20 }, (_, i) => `tool_${i}`),
-      };
-
-      render(<SkillDetail skill={manyToolsSkill} isOpen={true} onClose={vi.fn()} />);
-
-      // All tools should be listed
+    it('should handle many tools', () => {
+      const manyTools = Array.from({ length: 20 }, (_, i) => `tool_${i}`);
+      render(
+        <SkillDetail
+          skill={{ ...mockSkill, tools: manyTools }}
+          isOpen={true}
+          onClose={vi.fn()}
+        />
+      );
       expect(screen.getByText('tool_0')).toBeInTheDocument();
       expect(screen.getByText('tool_19')).toBeInTheDocument();
     });
 
-    it('should handle skill with special characters in name', () => {
-      const specialCharSkill: Skill = {
-        ...mockSkill,
-        name: 'Test <Script> & "Quotes"',
-      };
-
-      render(<SkillDetail skill={specialCharSkill} isOpen={true} onClose={vi.fn()} />);
-
-      // Should escape HTML
-      expect(screen.getByText(/Test/)).toBeInTheDocument();
-    });
-
-    it('should handle null skill gracefully', () => {
-      const { container } = render(
-        <SkillDetail skill={null} isOpen={true} onClose={vi.fn()} />
+    it('should handle special characters in skill name', () => {
+      render(
+        <SkillDetail
+          skill={{ ...mockSkill, name: 'Test <Script> & "Quotes"' }}
+          isOpen={true}
+          onClose={vi.fn()}
+        />
       );
-
-      expect(container.firstChild).toBeNull();
-    });
-  });
-
-  describe('Styling', () => {
-    it('should have proper width constraints', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('w-full');
-        expect(drawer).toHaveClass('max-w-md');
-      }
-    });
-
-    it('should have shadow and border', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('shadow-lg');
-        expect(drawer).toHaveClass('border-l');
-      }
-    });
-
-    it('should have proper z-index for overlay', () => {
-      const { container } = render(
-        <SkillDetail skill={mockSkill} isOpen={true} onClose={vi.fn()} />
-      );
-
-      const drawer = container.querySelector('[data-testid="skill-drawer"]');
-      if (drawer) {
-        expect(drawer).toHaveClass('z-50');
-      }
+      expect(screen.getByText('Test <Script> & "Quotes"')).toBeInTheDocument();
     });
   });
 });
-

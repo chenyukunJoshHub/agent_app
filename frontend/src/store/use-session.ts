@@ -172,12 +172,16 @@ export const useSession = create<SessionState>((set, _get) => ({
   clearTraceEvents: () => set({ traceEvents: [] }),
 
   addTraceBlock: (block) => {
-    set((state) => ({
-      traceBlocks: [
-        ...state.traceBlocks,
-        { ...block, turnId: state.currentTurnId ?? undefined },
-      ].slice(-200),
-    }));
+    set((state) => {
+      const seen = new Set(state.traceBlocks.map((b) => b.id));
+      if (seen.has(block.id)) return state;
+      return {
+        traceBlocks: [
+          ...state.traceBlocks,
+          { ...block, turnId: state.currentTurnId ?? undefined },
+        ].slice(-200),
+      };
+    });
   },
 
   clearTraceBlocks: () => set({ traceBlocks: [] }),

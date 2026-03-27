@@ -1,243 +1,250 @@
 """
-Integration tests for /chat API endpoint.
+Integration tests for /chat and /chat/resume API endpoints.
 
-These tests verify the SSE streaming chat endpoint.
+These tests validate current API contracts:
+- GET /chat (SSE streaming)
+- POST /chat/resume (HIL resume via native Command payload)
 """
-import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 
-from app.main import app
+if TYPE_CHECKING:
+    from httpx import AsyncClient
+
+
+async def _fake_done_stream(*args: Any, **kwargs: Any):
+    """Yield one deterministic SSE done event."""
+    yield "event: done\ndata: {\"answer\": \"ok\"}\n\n"
+
+
+class _NotFoundInterruptStore:
+    async def get_interrupt(self, interrupt_id: str) -> None:
+        return None
+
+
+class _ProcessedInterruptStore:
+    async def get_interrupt(self, interrupt_id: str) -> dict[str, Any]:
+        return {"status": "confirmed"}
+
+
+class _PendingInterruptStore:
+    async def get_interrupt(self, interrupt_id: str) -> dict[str, Any]:
+        return {
+            "status": "pending",
+            "tool_name": "send_email",
+            "tool_args": {
+                "to": "resume@example.com",
+                "subject": "Resume Subject",
+                "body": "Resume Body",
+            },
+        }
+
+    async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+        return None
+
+
+class _FakeState:
+    values = {"messages": []}
+
+
+class _CaptureInputAgent:
+    def __init__(self, sink: list[Any]) -> None:
+        self._sink = sink
+
+    async def astream(self, input_data: Any, *args: Any, **kwargs: Any):
+        self._sink.append(input_data)
+        if False:
+            yield None
+
+    async def aget_state(self, config: dict[str, Any]) -> _FakeState:
+        return _FakeState()
 
 
 class TestChatEndpoint:
-    """Test POST /chat endpoint."""
+    """Test GET /chat endpoint."""
 
     @pytest.mark.asyncio
     async def test_health_check(self, async_client: AsyncClient) -> None:
-        """Test health check endpoint."""
         response = await async_client.get("/health")
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
+        assert response.json()["status"] == "ok"
 
     @pytest.mark.asyncio
     async def test_root_endpoint(self, async_client: AsyncClient) -> None:
-        """Test root endpoint."""
         response = await async_client.get("/")
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
         assert "version" in data
 
-    @pytest.mark.requires_llm
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        not os.getenv("OLLAMA_BASE_URL"),
-        reason="Ollama not configured",
-    )
-    async def test_chat_endpoint_returns_stream(self, async_client: AsyncClient) -> None:
-        """Test that /chat returns SSE stream."""
-        response = await async_client.post(
-            "/chat/chat",
-            json={
-                "message": "你好",
-                "session_id": "test_session",
-                "user_id": "test_user",
-            },
-        )
+    async def test_chat_returns_sse_stream(self, async_client: AsyncClient) -> None:
+        with patch("app.api.chat._run_agent_stream", new=_fake_done_stream):
+            response = await async_client.get(
+                "/chat",
+                params={
+                    "message": "你好",
+                    "session_id": "test_session",
+                    "user_id": "test_user",
+                },
+            )
 
-        # Should return 200 with streaming response
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
+        assert response.headers.get("X-Accel-Buffering") == "no"
+        assert "event: done" in response.text
 
     @pytest.mark.asyncio
     async def test_chat_request_validation(self, async_client: AsyncClient) -> None:
-        """Test chat request validation."""
         # Missing message
-        response = await async_client.post(
-            "/chat/chat",
-            json={
-                "session_id": "test_session",
-                "user_id": "test_user",
-            },
+        response = await async_client.get(
+            "/chat",
+            params={"session_id": "test_session", "user_id": "test_user"},
         )
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 422
 
         # Missing session_id
-        response = await async_client.post(
-            "/chat/chat",
-            json={
-                "message": "test",
-                "user_id": "test_user",
-            },
+        response = await async_client.get(
+            "/chat",
+            params={"message": "test", "user_id": "test_user"},
         )
         assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_chat_default_user_id(self, async_client: AsyncClient) -> None:
-        """Test that user_id defaults to 'dev_user'."""
-        with patch("app.api.chat.create_react_agent") as mock_create:
-            # Mock agent
-            mock_agent = AsyncMock()
-            mock_agent.astream = AsyncMock(return_value=[])
-            mock_create.return_value = mock_agent
-
-            response = await async_client.post(
-                "/chat/chat",
-                json={
+        with patch("app.api.chat._run_agent_stream", new=_fake_done_stream):
+            response = await async_client.get(
+                "/chat",
+                params={
                     "message": "test",
                     "session_id": "test_session",
-                    # user_id not provided
                 },
             )
 
-            # Should accept request without user_id
-            assert response.status_code == 200
+        assert response.status_code == 200
+
+
+class TestChatResumeEndpoint:
+    """Test POST /chat/resume endpoint."""
 
     @pytest.mark.asyncio
-    async def test_chat_resume_not_implemented(self, async_client: AsyncClient) -> None:
-        """Test that /chat/resume returns 501 in P0."""
-        response = await async_client.post(
-            "/chat/chat/resume",
-            json={
-                "session_id": "test_session",
-                "user_id": "test_user",
-                "interrupt_id": "test_interrupt",
-                "approved": True,
-            },
-        )
-
-        assert response.status_code == 501
-        data = response.json()
-        assert "not implemented in P0" in data.get("detail", "")
-
-
-class TestChatSSEStreaming:
-    """Test SSE streaming functionality."""
-
-    @pytest.fixture
-    def mock_agent_stream(self):
-        """Mock agent astream generator."""
-        async def stream_generator():
-            # Yield chunks that would trigger SSE events
-            yield {"messages": [HumanMessage(content="test")]}
-            await asyncio.sleep(0.01)
-            yield {"messages": [AIMessage(content="response")]}
-
-        return stream_generator()
-
-    @pytest.mark.asyncio
-    async def test_sse_content_type(self, async_client: AsyncClient) -> None:
-        """Test SSE response has correct content type."""
-        with patch("app.api.chat.create_react_agent") as mock_create:
-            mock_agent = AsyncMock()
-            mock_agent.astream = AsyncMock(return_value=self.mock_agent_stream())
-            mock_create.return_value = mock_agent
-
+    async def test_resume_interrupt_not_found(self, async_client: AsyncClient) -> None:
+        with patch(
+            "app.observability.interrupt_store.get_interrupt_store",
+            new=AsyncMock(return_value=_NotFoundInterruptStore()),
+        ):
             response = await async_client.post(
-                "/chat/chat",
+                "/chat/resume",
                 json={
-                    "message": "test",
                     "session_id": "test_session",
                     "user_id": "test_user",
+                    "interrupt_id": "not-found",
+                    "approved": True,
                 },
             )
 
-            assert "text/event-stream" in response.headers.get("content-type", "")
-            # Verify no-buffering header
-            assert response.headers.get("X-Accel-Buffering") == "no"
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+        assert "event: error" in response.text
+        assert "不存在或已过期" in response.text
 
     @pytest.mark.asyncio
-    async def test_sse_event_format(self, async_client: AsyncClient) -> None:
-        """Test SSE events are correctly formatted."""
-        with patch("app.api.chat.create_react_agent") as mock_create:
-            # Create a mock that yields formatted events
-            async def event_stream():
-                # Simulate SSE events
-                events = [
-                    "event: agent_start\ndata: {\"session_id\": \"test\"}\n\n",
-                    "event: thought\ndata: {\"content\": \"thinking\"}\n\n",
-                    "event: done\ndata: {\"answer\": \"complete\"}\n\n",
-                ]
-                for event in events:
-                    yield event
-
-            mock_agent = MagicMock()
-            mock_agent.astream = event_stream
-            mock_create.return_value = mock_agent
-
+    async def test_resume_interrupt_already_processed(self, async_client: AsyncClient) -> None:
+        with patch(
+            "app.observability.interrupt_store.get_interrupt_store",
+            new=AsyncMock(return_value=_ProcessedInterruptStore()),
+        ):
             response = await async_client.post(
-                "/chat/chat",
+                "/chat/resume",
                 json={
-                    "message": "test",
                     "session_id": "test_session",
                     "user_id": "test_user",
+                    "interrupt_id": "already-processed",
+                    "approved": True,
                 },
             )
 
-            # Read response content
-            content = response.text
-            assert "event: agent_start" in content
-            assert "event: thought" in content
-            assert "event: done" in content
-
-
-class TestChatErrorHandling:
-    """Test error handling in chat endpoint."""
+        assert response.status_code == 200
+        assert "event: error" in response.text
+        assert "中断已被处理" in response.text
 
     @pytest.mark.asyncio
-    async def test_agent_error_returns_sse_error(self, async_client: AsyncClient) -> None:
-        """Test that agent errors are sent as SSE error events."""
-        with patch("app.api.chat.create_react_agent") as mock_create:
-            # Mock agent that raises error
-            async def error_stream():
-                raise Exception("Agent execution failed")
+    async def test_resume_approve_uses_native_command(self, async_client: AsyncClient) -> None:
+        call_inputs: list[Any] = []
 
-            mock_agent = MagicMock()
-            mock_agent.astream = error_stream
-            mock_create.return_value = mock_agent
-
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=_PendingInterruptStore()),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=_CaptureInputAgent(call_inputs)),
+            ),
+        ):
             response = await async_client.post(
-                "/chat/chat",
+                "/chat/resume",
                 json={
-                    "message": "test",
                     "session_id": "test_session",
                     "user_id": "test_user",
+                    "interrupt_id": "interrupt-approve",
+                    "approved": True,
                 },
             )
 
-            # Should still return 200 (error sent via SSE)
-            assert response.status_code == 200
+        assert response.status_code == 200
+        assert "event: hil_resolved" in response.text
+        assert len(call_inputs) == 1
+        assert isinstance(call_inputs[0], Command)
+        payload = call_inputs[0].resume["interrupt-approve"]
+        assert payload["decisions"][0]["type"] == "approve"
 
     @pytest.mark.asyncio
-    async def test_invalid_json_in_sse(self, async_client: AsyncClient) -> None:
-        """Test handling of malformed SSE data."""
-        # This would test client resilience to bad SSE
-        pass
+    async def test_resume_reject_uses_native_command(self, async_client: AsyncClient) -> None:
+        call_inputs: list[Any] = []
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=_PendingInterruptStore()),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=_CaptureInputAgent(call_inputs)),
+            ),
+        ):
+            response = await async_client.post(
+                "/chat/resume",
+                json={
+                    "session_id": "test_session",
+                    "user_id": "test_user",
+                    "interrupt_id": "interrupt-reject",
+                    "approved": False,
+                },
+            )
+
+        assert response.status_code == 200
+        assert "event: hil_resolved" in response.text
+        assert len(call_inputs) == 1
+        assert isinstance(call_inputs[0], Command)
+        payload = call_inputs[0].resume["interrupt-reject"]
+        assert payload["decisions"][0]["type"] == "reject"
 
 
 class TestChatCORS:
-    """Test CORS configuration."""
-
     @pytest.mark.asyncio
     async def test_cors_headers(self, async_client: AsyncClient) -> None:
-        """Test that CORS headers are set correctly."""
         response = await async_client.options(
-            "/chat/chat",
+            "/chat",
             headers={
                 "Origin": "http://localhost:3000",
-                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Method": "GET",
             },
         )
-
-        # Verify CORS headers
         assert "access-control-allow-origin" in response.headers
-
-
-# Import os
-import os

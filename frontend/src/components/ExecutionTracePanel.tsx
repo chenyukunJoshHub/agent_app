@@ -37,10 +37,56 @@ function groupByTurn(blocks: TraceBlock[]): Array<{ turnId: string | undefined; 
   return groups;
 }
 
-export function ExecutionTracePanel({ traceBlocks, turnStatuses }: ExecutionTracePanelProps) {
+function eventMatchesBlock(block: TraceBlock, event: TraceEvent): boolean {
+  if (event.status === 'error' && block.type === 'error') return true;
+  switch (block.type) {
+    case 'turn_start':
+      return (
+        (event.stage === 'stream' &&
+          ['request_received', 'agent_created', 'stream_started'].includes(event.step)) ||
+        (event.stage === 'react' && event.step === 'turn_start')
+      );
+    case 'planning':
+      return event.stage === 'planner' && ['plan_created', 'plan_completed'].includes(event.step);
+    case 'retrieval':
+      return event.stage === 'retrieval' && event.step === 'context_retrieved';
+    case 'replanning':
+      return event.stage === 'replanner' && ['triggered', 'plan_updated'].includes(event.step);
+    case 'thinking':
+      return (
+        event.stage === 'react' &&
+        ['model_call_start', 'model_call_end', 'thought_emitted'].includes(event.step)
+      );
+    case 'tool_call':
+      return event.stage === 'tools' && ['tool_call_planned', 'tool_call_result'].includes(event.step);
+    case 'answer':
+      return event.stage === 'react' && event.step === 'answer_emitted';
+    case 'memory_load':
+      return event.stage === 'memory';
+    case 'prompt_build':
+      return event.stage === 'context' && event.step === 'token_update';
+    case 'hil_pause':
+      return event.stage === 'hil' && event.step === 'interrupt_emitted';
+    case 'turn_summary':
+      return event.stage === 'react' && event.step === 'turn_done';
+    default:
+      return false;
+  }
+}
+
+export function ExecutionTracePanel({ traceBlocks, traceEvents, turnStatuses }: ExecutionTracePanelProps) {
   const [verboseMode, setVerboseMode] = useState(false);
 
   const turnGroups = useMemo(() => groupByTurn(traceBlocks), [traceBlocks]);
+  const turnEvents = useMemo(() => {
+    const grouped = new Map<string, TraceEvent[]>();
+    for (const event of traceEvents) {
+      const key = event.turnId ?? '__pre__';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(event);
+    }
+    return grouped;
+  }, [traceEvents]);
 
   const visibleGroups = useMemo(() => {
     if (verboseMode) return turnGroups;
@@ -128,9 +174,19 @@ export function ExecutionTracePanel({ traceBlocks, turnStatuses }: ExecutionTrac
                   </div>
 
                   <div className="ml-2 border-l-2 border-border pl-3 space-y-2">
-                    {group.blocks.map((block) => (
-                      <TraceBlockCard key={block.id} block={block} />
-                    ))}
+                    {group.blocks.map((block) => {
+                      const key = group.turnId ?? '__pre__';
+                      const rawEvents = verboseMode
+                        ? (turnEvents.get(key) ?? []).filter((event) => eventMatchesBlock(block, event))
+                        : undefined;
+                      return (
+                        <TraceBlockCard
+                          key={block.id}
+                          block={block}
+                          rawEvents={rawEvents}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               );

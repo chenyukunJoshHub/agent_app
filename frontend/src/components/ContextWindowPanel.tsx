@@ -292,7 +292,7 @@ export function ContextWindowPanel({ data, slotDetails, stateMessages }: Context
                 >
                   <SlotBar slot={slot} />
                 </div>
-                {/* Slot ⑧ (history) 展开预览 */}
+                {/* Slot ⑨ (history) 展开预览 */}
                 {slot.name === 'history' && stateMessages && stateMessages.length > 0 && (
                   <details className="mt-1 ml-14">
                     <summary className="text-xs text-text-muted cursor-pointer">

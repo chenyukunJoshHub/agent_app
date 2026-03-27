@@ -68,11 +68,11 @@ export function SessionMetadataSection({
     <div className="border-b border-border">
       {/* Section header */}
       <div className="flex items-center gap-2 px-4 py-3">
-        <div
+        {/* <div
           data-testid="module1-accent"
           style={{ width: 4, height: 20, background: '#2563EB', borderRadius: 2, flexShrink: 0 }}
-        />
-        <span className="text-sm font-bold text-text-primary">① 会话元数据与 Token 统计</span>
+        /> */}
+        {/* <span className="text-sm font-bold text-text-primary">① 会话元数据与 Token 统计</span> */}
       </div>
 
       {/* 2-col metadata grid */}

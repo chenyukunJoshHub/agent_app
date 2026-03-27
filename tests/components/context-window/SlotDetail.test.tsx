@@ -14,17 +14,45 @@ import type { SlotDetail as SlotDetailType } from '@/types/context-window';
 
 // Mock framer-motion to avoid animation issues in tests
 vi.mock('framer-motion', () => ({
+  // Prevent motion-only props (initial/animate/transition...) from leaking to DOM.
   motion: {
-    div: ({ children, onClick, ...props }: any) => (
-      <div onClick={onClick} {...props}>
-        {children}
-      </div>
-    ),
-    button: ({ children, onClick, ...props }: any) => (
-      <button onClick={onClick} {...props}>
-        {children}
-      </button>
-    ),
+    // Keep only DOM-safe props in test doubles.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    div: ({ children, onClick, ...props }: any) => {
+      const domProps = { ...props };
+      delete domProps.initial;
+      delete domProps.animate;
+      delete domProps.exit;
+      delete domProps.transition;
+      delete domProps.variants;
+      delete domProps.whileHover;
+      delete domProps.whileTap;
+      delete domProps.whileInView;
+      delete domProps.viewport;
+      delete domProps.layout;
+      delete domProps.layoutId;
+      delete domProps.drag;
+      delete domProps.dragConstraints;
+      return (
+        <div onClick={onClick} {...domProps}>
+          {children}
+        </div>
+      );
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    button: ({ children, onClick, ...props }: any) => {
+      const domProps = { ...props };
+      delete domProps.initial;
+      delete domProps.animate;
+      delete domProps.exit;
+      delete domProps.transition;
+      delete domProps.variants;
+      return (
+        <button onClick={onClick} {...domProps}>
+          {children}
+        </button>
+      );
+    },
   },
 }));
 
@@ -184,8 +212,8 @@ describe('SlotDetailList Component', () => {
       enabled: true,
     },
     {
-      name: 'active_skill',
-      display_name: '活跃技能',
+      name: 'skill_registry',
+      display_name: '技能注册表',
       content: 'Skill content',
       tokens: 50,
       enabled: true,
@@ -203,7 +231,7 @@ describe('SlotDetailList Component', () => {
     render(<SlotDetailList slots={mockSlots} />);
 
     expect(screen.getByText('系统提示词')).toBeInTheDocument();
-    expect(screen.getByText('活跃技能')).toBeInTheDocument();
+    expect(screen.getByText('技能注册表')).toBeInTheDocument();
     expect(screen.getByText('动态示例')).toBeInTheDocument();
   });
 
@@ -215,7 +243,7 @@ describe('SlotDetailList Component', () => {
     // System (100 tokens) should appear first
     const systemIndex = allText.indexOf('系统提示词');
     const fewShotIndex = allText.indexOf('动态示例');
-    const activeSkillIndex = allText.indexOf('活跃技能');
+    const activeSkillIndex = allText.indexOf('技能注册表');
 
     // Verify ordering by token count: system(100) > few_shot(75) > active_skill(50)
     expect(systemIndex).toBeLessThan(fewShotIndex);

@@ -72,17 +72,33 @@ class TestMemoryManagerP0:
         assert profile.interaction_count == 10
 
     @pytest.mark.asyncio
-    async def test_save_episodic_is_noop_p0(self, memory_manager, mock_store):
-        """P0: save_episodic 空操作，不写入 store"""
+    async def test_save_episodic_persists_profile(self, memory_manager, mock_store):
+        """save_episodic 应写入 store.aput。"""
         profile = UserProfile(
             user_id="user-789", preferences={"test": "value"}, interaction_count=1
         )
 
-        # P0 不应该写入 store
         await memory_manager.save_episodic("user-789", profile)
 
-        # 验证 store.aput 没有被调用
-        assert mock_store.aput.call_count == 0
+        mock_store.aput.assert_called_once_with(
+            namespace=("profile", "user-789"),
+            key="episodic",
+            value=profile.model_dump(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_save_episodic_overwrites_existing_data(self, memory_manager, mock_store):
+        """同一 user_id 重复写入时，后写值应成为最新值。"""
+        first = UserProfile(user_id="user-123", preferences={"language": "en"}, interaction_count=1)
+        second = UserProfile(user_id="user-123", preferences={"language": "zh"}, interaction_count=2)
+
+        await memory_manager.save_episodic("user-123", first)
+        await memory_manager.save_episodic("user-123", second)
+
+        assert mock_store.aput.call_count == 2
+        assert mock_store.aput.call_args.kwargs["namespace"] == ("profile", "user-123")
+        assert mock_store.aput.call_args.kwargs["key"] == "episodic"
+        assert mock_store.aput.call_args.kwargs["value"]["preferences"]["language"] == "zh"
 
     def test_build_ephemeral_prompt_with_empty_preferences(self, memory_manager):
         """空偏好时返回空字符串"""

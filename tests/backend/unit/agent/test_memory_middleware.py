@@ -3,9 +3,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock
 from typing import Any
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
-from app.agent.middleware.memory import MemoryMiddleware, MemoryState
+from app.agent.middleware.memory import MemoryMiddleware
 from app.memory.schemas import UserProfile, MemoryContext
 from app.memory.manager import MemoryManager
 
@@ -113,6 +113,31 @@ class TestMemoryMiddlewareBeforeAgent:
         assert "memory_ctx" in result
         assert result["memory_ctx"].episodic.preferences == {}
 
+    @pytest.mark.asyncio
+    async def test_abefore_agent_sets_baseline_profile(self, memory_middleware, mock_store):
+        """abefore_agent 应同时返回 baseline 供 dirty-flag 对比。"""
+        stored_data = {
+            "user_id": "user-abc",
+            "preferences": {"domain": "legal-tech"},
+            "interaction_count": 9,
+            "summary": "baseline summary",
+        }
+        mock_item = Mock()
+        mock_item.value = stored_data
+        mock_store.aget.return_value = mock_item
+
+        runtime = Mock()
+        runtime.config = {"configurable": {"user_id": "user-abc"}}
+
+        result = await memory_middleware.abefore_agent({}, runtime)
+
+        assert result is not None
+        assert "memory_ctx_baseline" in result
+        baseline = result["memory_ctx_baseline"]
+        assert isinstance(baseline, UserProfile)
+        assert baseline.interaction_count == 9
+        assert baseline.preferences["domain"] == "legal-tech"
+
 
 class TestMemoryMiddlewareWrapModelCall:
     """Test MemoryMiddleware.wrap_model_call per architecture doc §2.5."""
@@ -139,7 +164,7 @@ class TestMemoryMiddlewareWrapModelCall:
         handler.return_value = Mock()
 
         # 调用 wrap_model_call
-        result = memory_middleware.wrap_model_call(request, handler)
+        memory_middleware.wrap_model_call(request, handler)
 
         # 验证 handler 被调用
         assert handler.called
@@ -161,7 +186,7 @@ class TestMemoryMiddlewareWrapModelCall:
         handler = Mock()
         handler.return_value = Mock()
 
-        result = memory_middleware.wrap_model_call(request, handler)
+        memory_middleware.wrap_model_call(request, handler)
 
         # 直接透传，不修改
         assert handler.called
@@ -180,7 +205,7 @@ class TestMemoryMiddlewareWrapModelCall:
         handler = Mock()
         handler.return_value = Mock()
 
-        result = memory_middleware.wrap_model_call(request, handler)
+        memory_middleware.wrap_model_call(request, handler)
 
         # 空偏好时不注入，直接透传
         assert handler.called
@@ -191,14 +216,171 @@ class TestMemoryMiddlewareAfterAgent:
 
     @pytest.mark.asyncio
     async def test_aafter_agent_is_noop_p0(self, memory_middleware):
-        """P0: aafter_agent 空操作，返回 None"""
+        """兼容性：无 user_id 时 aafter_agent 返回 None 且不写库。"""
         state: Any = {"memory_ctx": MemoryContext()}
         runtime = Mock()
 
         result = await memory_middleware.aafter_agent(state, runtime)
 
-        # P0 返回 None，不写回 store
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aafter_agent_rule_mode_increments_and_saves(
+        self, memory_middleware, monkeypatch
+    ):
+        """rule 模式应 +1 interaction_count 并写回。"""
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_update_mode", "rule")
+
+        profile = UserProfile(
+            user_id="u1",
+            preferences={"domain": "legal-tech"},
+            interaction_count=2,
+        )
+        state: Any = {
+            "memory_ctx": MemoryContext(episodic=profile),
+            "memory_ctx_baseline": profile.model_copy(deep=True),
+            "messages": [HumanMessage(content="请用中文继续合同审查流程")],
+        }
+        runtime = Mock()
+        runtime.context = Mock()
+        runtime.context.user_id = "u1"
+        runtime.context.sse_queue = None
+
+        result = await memory_middleware.aafter_agent(state, runtime)
+
+        assert result is None
+        memory_middleware.mm.store.aput.assert_called_once()
+        saved_payload = memory_middleware.mm.store.aput.call_args.kwargs["value"]
+        assert saved_payload["interaction_count"] == 3
+        assert saved_payload["preferences"]["language"] == "zh"
+        assert saved_payload["preferences"]["domain"] == "legal-tech"
+
+    @pytest.mark.asyncio
+    async def test_aafter_agent_dirty_false_skips_save(
+        self, memory_middleware, monkeypatch
+    ):
+        """无交互内容且无规则变化时 dirty=false，不写库。"""
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_update_mode", "rule")
+
+        profile = UserProfile(user_id="u2", preferences={}, interaction_count=0)
+        state: Any = {
+            "memory_ctx": MemoryContext(episodic=profile),
+            "memory_ctx_baseline": profile.model_copy(deep=True),
+            "messages": [AIMessage(content="")],
+        }
+        runtime = Mock()
+        runtime.context = Mock()
+        runtime.context.user_id = "u2"
+        runtime.context.sse_queue = None
+
+        result = await memory_middleware.aafter_agent(state, runtime)
+
+        assert result is None
+        memory_middleware.mm.store.aput.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aafter_agent_llm_mode_interval(
+        self, memory_middleware, monkeypatch
+    ):
+        """llm 模式只在第 N 轮触发提炼。"""
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_update_mode", "llm")
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_llm_interval", 10)
+
+        non_trigger = UserProfile(user_id="u3", preferences={}, interaction_count=8)
+        non_trigger_state: Any = {
+            "memory_ctx": MemoryContext(episodic=non_trigger),
+            "memory_ctx_baseline": non_trigger.model_copy(deep=True),
+            "messages": [HumanMessage(content="hello world")],
+        }
+        runtime = Mock()
+        runtime.context = Mock()
+        runtime.context.user_id = "u3"
+        runtime.context.sse_queue = None
+
+        fake_extract = AsyncMock(return_value={"preferences": {"role": "analyst"}, "summary": "x", "retain": []})
+        monkeypatch.setattr(memory_middleware, "_extract_profile_with_llm", fake_extract)
+
+        await memory_middleware.aafter_agent(non_trigger_state, runtime)
+        assert fake_extract.await_count == 0
+
+        trigger = UserProfile(user_id="u3", preferences={}, interaction_count=9)
+        trigger_state: Any = {
+            "memory_ctx": MemoryContext(episodic=trigger),
+            "memory_ctx_baseline": trigger.model_copy(deep=True),
+            "messages": [HumanMessage(content="hello world")],
+        }
+        await memory_middleware.aafter_agent(trigger_state, runtime)
+        assert fake_extract.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_aafter_agent_llm_failure_fallback_to_rule(
+        self, memory_middleware, monkeypatch
+    ):
+        """llm 提炼失败时应回退规则提炼，不抛错。"""
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_update_mode", "llm")
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_llm_interval", 1)
+        monkeypatch.setattr(memory_middleware, "_extract_profile_with_llm", AsyncMock(return_value=None))
+
+        profile = UserProfile(user_id="u4", preferences={}, interaction_count=0)
+        state: Any = {
+            "memory_ctx": MemoryContext(episodic=profile),
+            "memory_ctx_baseline": profile.model_copy(deep=True),
+            "messages": [HumanMessage(content="请用中文回答合同问题")],
+        }
+        runtime = Mock()
+        runtime.context = Mock()
+        runtime.context.user_id = "u4"
+        runtime.context.sse_queue = None
+
+        result = await memory_middleware.aafter_agent(state, runtime)
+
+        assert result is None
+        saved_payload = memory_middleware.mm.store.aput.call_args.kwargs["value"]
+        assert saved_payload["preferences"]["language"] == "zh"
+        assert saved_payload["preferences"]["domain"] == "legal-tech"
+
+    @pytest.mark.asyncio
+    async def test_retain_format_and_opinion_threshold(
+        self, memory_middleware, monkeypatch
+    ):
+        """Retain summary 应包含 W/B/O/S；仅高置信 O 写入 preferences。"""
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_update_mode", "llm")
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_llm_interval", 1)
+        monkeypatch.setattr("app.agent.middleware.memory.settings.memory_profile_opinion_min_confidence", 0.9)
+
+        llm_payload = {
+            "preferences": {"tone": "professional"},
+            "summary": "用户偏好稳定",
+            "retain": [
+                {"type": "W", "text": "用户是法务角色"},
+                {"type": "B", "text": "本轮完成合同风险审查"},
+                {"type": "O", "text": "偏好中文回复", "confidence": 0.95, "preference": {"language": "zh"}},
+                {"type": "O", "text": "偏好英文回复", "confidence": 0.6, "preference": {"language": "en"}},
+                {"type": "S", "text": "持续关注合同流程自动化"},
+            ],
+        }
+        monkeypatch.setattr(memory_middleware, "_extract_profile_with_llm", AsyncMock(return_value=llm_payload))
+
+        profile = UserProfile(user_id="u5", preferences={}, interaction_count=9)
+        state: Any = {
+            "memory_ctx": MemoryContext(episodic=profile),
+            "memory_ctx_baseline": profile.model_copy(deep=True),
+            "messages": [HumanMessage(content="继续处理合同流程")],
+        }
+        runtime = Mock()
+        runtime.context = Mock()
+        runtime.context.user_id = "u5"
+        runtime.context.sse_queue = None
+
+        await memory_middleware.aafter_agent(state, runtime)
+
+        saved_payload = memory_middleware.mm.store.aput.call_args.kwargs["value"]
+        assert saved_payload["preferences"]["language"] == "zh"
+        assert saved_payload["preferences"]["tone"] == "professional"
+        assert "W @" in saved_payload["summary"]
+        assert "B @" in saved_payload["summary"]
+        assert "S @" in saved_payload["summary"]
+        assert "O(c=0.95)" in saved_payload["summary"]
 
 
 class TestProceduralInjection:

@@ -33,15 +33,15 @@ export function SlotCardsSection({ slotDetails, stateMessages }: SlotCardsSectio
   return (
     <div className="border-b border-border">
       {/* Section header */}
-      <div className="flex items-center gap-2 px-4 py-3">
+      {/* <div className="flex items-center gap-2 px-4 py-3">
         <div
           data-testid="module3-accent"
           style={{ width: 4, height: 20, background: '#0D9488', borderRadius: 2, flexShrink: 0 }}
         />
         <span className="text-sm font-bold text-text-primary">③ 各 Slot 原文与 Prompt</span>
-      </div>
+      </div> */}
 
-      <div className="flex flex-col gap-1 px-4 pb-4">
+      <div className="flex flex-col gap-1 px-4 pb-4 mt-4">
         {sorted.length === 0 && (
           <p className="py-2 text-xs text-text-muted">暂无 Slot 数据</p>
         )}

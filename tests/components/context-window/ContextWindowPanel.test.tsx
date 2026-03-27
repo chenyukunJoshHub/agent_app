@@ -16,7 +16,8 @@ describe('ContextWindowPanel', () => {
       working_budget: 32768,
       slots: {
         system: 2000,
-        active_skill: 0,
+        skill_registry: 600,
+        skill_protocol: 200,
         few_shot: 0,
         rag: 0,
         episodic: 500,
@@ -24,7 +25,6 @@ describe('ContextWindowPanel', () => {
         tools: 1200,
         history: 21068,
         output_format: 0,
-        user_input: 0,
       },
       usage: {
         total_used: 5000,
@@ -228,12 +228,12 @@ describe('ContextWindowPanel', () => {
   });
 
   describe('with EMPTY_CONTEXT_DATA', () => {
-    it('Slot 预算分解区块展示全部 10 行（含 ⑨ 和 ⑩）', () => {
+    it('Slot 预算分解区块展示全部 10 行（含 ⑨ 会话历史和 ⑩ 输出格式）', () => {
       render(<ContextWindowPanel data={EMPTY_CONTEXT_DATA} />);
-      // 在 slot-breakdown testid 范围内查找 ⑨/⑩，确保是 Slot 分解区块而非 category 区块
+      // 在 slot-breakdown 范围内断言当前 Prompt v20 10-slot 显示名称
       const breakdown = screen.getByTestId('slot-breakdown');
-      expect(within(breakdown).getByText(/⑨ 输出格式规范/)).toBeInTheDocument();
-      expect(within(breakdown).getByText(/⑩ 本轮用户输入/)).toBeInTheDocument();
+      expect(within(breakdown).getByText(/⑨ 会话历史/)).toBeInTheDocument();
+      expect(within(breakdown).getByText(/⑩ 输出格式/)).toBeInTheDocument();
     });
 
     it.skip('Slot ⑨ 和 ⑩ 出现在 category 汇总中（当 tokens > 0）— superseded by ContextPanel', () => {

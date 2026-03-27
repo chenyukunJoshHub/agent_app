@@ -7,7 +7,7 @@ const mockBudget = {
   model_context_window: 200000,
   working_budget: 32768,
   slots: {
-    system: 2048, active_skill: 0, few_shot: 0, rag: 0,
+    system: 2048, skill_registry: 0, skill_protocol: 0, few_shot: 0, rag: 0,
     episodic: 0, procedural: 0, tools: 1800, history: 3200,
     output_format: 0, user_input: 0,
   },
@@ -26,11 +26,11 @@ const mockSlotUsage = EMPTY_CONTEXT_DATA.slotUsage.map(s => ({
 }));
 
 describe('TokenMapSection', () => {
-  it('应渲染模块二靛色色条 testid', () => {
+  it('应渲染 token 地图标题文本', () => {
     render(
       <TokenMapSection budget={mockBudget} slotUsage={mockSlotUsage} />
     );
-    expect(screen.getByTestId('module2-accent')).toBeInTheDocument();
+    expect(screen.getByText(/context window Token 占比/)).toBeInTheDocument();
   });
 
   it('进度条应包含 12 个段', () => {
@@ -56,9 +56,9 @@ describe('TokenMapSection', () => {
     expect(screen.getByText(/剩余可用/)).toBeInTheDocument();
   });
 
-  it('等宽表格应包含压缩预留行', () => {
+  it('等宽表格应包含安全余量行', () => {
     render(<TokenMapSection budget={mockBudget} slotUsage={mockSlotUsage} />);
-    expect(screen.getByText(/压缩预留/)).toBeInTheDocument();
+    expect(screen.getByText(/安全余量/)).toBeInTheDocument();
   });
 
   it('全 0 预算时不应崩溃', () => {

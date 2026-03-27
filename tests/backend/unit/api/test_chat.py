@@ -330,6 +330,14 @@ class TestChatEndpoint:
 class TestChatResumeEndpoint:
     """Test chat_resume endpoint."""
 
+    @staticmethod
+    async def _consume_streaming_response(response: StreamingResponse) -> list[str]:
+        chunks: list[str] = []
+        async for chunk in response.body_iterator:
+            text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+            chunks.append(text)
+        return chunks
+
     @pytest.mark.asyncio
     async def test_resume_returns_streaming_response(self) -> None:
         """Test that resume returns StreamingResponse (P1 implementation)."""
@@ -379,6 +387,207 @@ class TestChatResumeEndpoint:
             mock_logger.info.assert_called_once()
             call_args = str(mock_logger.info.call_args)
             assert "interrupt_123" in call_args
+
+    @pytest.mark.asyncio
+    async def test_resume_approved_deduplicates_same_send_email_payload(self) -> None:
+        """Same semantic send_email payload in same session should execute once."""
+        from app.api.chat import _RESUME_IDEMPOTENCY_STORE
+        from langgraph.types import Command
+
+        class FakeInterruptStore:
+            async def get_interrupt(self, interrupt_id: str) -> dict:
+                return {
+                    "status": "pending",
+                    "tool_name": "send_email",
+                    "tool_args": {
+                        "to": "same@example.com",
+                        "subject": "Idempotent Subject",
+                        "body": "Body",
+                    },
+                }
+
+            async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+                return None
+
+        _RESUME_IDEMPOTENCY_STORE.clear()
+        fake_store = FakeInterruptStore()
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=fake_store),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response_1 = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-dedupe-session",
+                    interrupt_id="interrupt-1",
+                    approved=True,
+                )
+            )
+            await self._consume_streaming_response(response_1)
+
+            response_2 = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-dedupe-session",
+                    interrupt_id="interrupt-2",
+                    approved=True,
+                )
+            )
+            chunks = await self._consume_streaming_response(response_2)
+
+            assert len(call_inputs) == 1
+            assert isinstance(call_inputs[0], Command)
+            command_payload = call_inputs[0].resume["interrupt-1"]
+            assert command_payload["decisions"][0]["type"] == "approve"
+            assert any("idempotent_replay" in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    async def test_resume_approved_executes_for_different_send_email_payload(self) -> None:
+        """Different send_email payloads should not be deduplicated."""
+        from app.api.chat import _RESUME_IDEMPOTENCY_STORE
+        from langgraph.types import Command
+
+        class FakeInterruptStore:
+            async def get_interrupt(self, interrupt_id: str) -> dict:
+                subject = "Subject-A" if interrupt_id == "interrupt-a" else "Subject-B"
+                return {
+                    "status": "pending",
+                    "tool_name": "send_email",
+                    "tool_args": {
+                        "to": "diff@example.com",
+                        "subject": subject,
+                        "body": "Body",
+                    },
+                }
+
+            async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+                return None
+
+        _RESUME_IDEMPOTENCY_STORE.clear()
+        fake_store = FakeInterruptStore()
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=fake_store),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response_a = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-diff-session",
+                    interrupt_id="interrupt-a",
+                    approved=True,
+                )
+            )
+            await self._consume_streaming_response(response_a)
+
+            response_b = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-diff-session",
+                    interrupt_id="interrupt-b",
+                    approved=True,
+                )
+            )
+            await self._consume_streaming_response(response_b)
+
+            assert len(call_inputs) == 2
+            assert all(isinstance(i, Command) for i in call_inputs)
+
+    @pytest.mark.asyncio
+    async def test_resume_reject_uses_command_with_reject_decision(self) -> None:
+        """Reject path should also resume through Command(decisions=[reject])."""
+        from app.api.chat import _RESUME_IDEMPOTENCY_STORE
+        from langgraph.types import Command
+
+        class FakeInterruptStore:
+            async def get_interrupt(self, interrupt_id: str) -> dict:
+                return {
+                    "status": "pending",
+                    "tool_name": "send_email",
+                    "tool_args": {
+                        "to": "reject@example.com",
+                        "subject": "Reject",
+                        "body": "Body",
+                    },
+                }
+
+            async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+                return None
+
+        _RESUME_IDEMPOTENCY_STORE.clear()
+        fake_store = FakeInterruptStore()
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=fake_store),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-reject-session",
+                    interrupt_id="interrupt-reject",
+                    approved=False,
+                )
+            )
+            await self._consume_streaming_response(response)
+
+            assert len(call_inputs) == 1
+            assert isinstance(call_inputs[0], Command)
+            command_payload = call_inputs[0].resume["interrupt-reject"]
+            assert command_payload["decisions"][0]["type"] == "reject"
 
 
 class TestChatIntegration:

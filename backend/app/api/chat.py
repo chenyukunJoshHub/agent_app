@@ -7,22 +7,28 @@ import asyncio
 import json
 import traceback
 from collections.abc import AsyncIterator
+from functools import lru_cache
+from inspect import isawaitable
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langgraph.types import Command
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.context import AgentContext
 from app.agent.langchain_engine import create_react_agent
-from app.observability.trace_events import build_trace_event, emit_trace_event
-from app.utils.token import count_tokens
-
 from app.config import settings
-from app.logger import ApiLogger, ToolsLogger, SseLogger
+from app.db.postgres import get_store
+from app.logger import ApiLogger, SseLogger, ToolsLogger
+from app.observability.trace_events import emit_trace_event
+from app.planner.orchestrator import TaskPlanner, TaskRuntimeStore
 from app.skills.manager import SkillManager
+from app.tools.idempotency import IdempotencyStore
+from app.tools.registry import build_tool_registry
+from app.utils.token import count_tokens
 
 
 # Request/Response Models
@@ -73,6 +79,140 @@ class SSEEventQueue:
 
 # Router
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+_RESUME_IDEMPOTENCY_STORE = IdempotencyStore()
+_TASK_PLANNER = TaskPlanner()
+_TASK_RUNTIME: TaskRuntimeStore | None = None
+_TASK_RUNTIME_LOCK = asyncio.Lock()
+
+
+@lru_cache(maxsize=1)
+def _get_resume_tool_manager() -> Any:
+    """Get cached ToolManager for resume-time idempotency key lookup."""
+    _, tool_manager, _ = build_tool_registry(enable_hil=True)
+    return tool_manager
+
+
+def _build_resume_idempotency_key(
+    session_id: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> str:
+    """
+    Build idempotency key for /chat/resume tool execution.
+
+    Priority:
+    1) ToolMeta.idempotency_key_fn(args)
+    2) Stable JSON serialization fallback
+    """
+    key_seed: str | None = None
+
+    try:
+        tool_manager = _get_resume_tool_manager()
+        meta = tool_manager.get_meta(tool_name)
+        if meta and meta.idempotency_key_fn:
+            generated = meta.idempotency_key_fn(tool_args)
+            if generated is not None:
+                key_seed = str(generated)
+    except Exception as err:
+        logger.warning(f"Failed to generate tool meta idempotency key for {tool_name}: {err}")
+
+    if not key_seed:
+        try:
+            key_seed = f"{tool_name}:{json.dumps(tool_args, ensure_ascii=False, sort_keys=True)}"
+        except TypeError:
+            key_seed = f"{tool_name}:{str(tool_args)}"
+
+    # Scope to session to avoid cross-session collisions.
+    return f"resume:{session_id}:{key_seed}"
+
+
+def _check_and_mark_resume_idempotency(
+    session_id: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> tuple[bool, str]:
+    """Return (already_executed, key) for resume tool invocation."""
+    key = _build_resume_idempotency_key(session_id, tool_name, tool_args)
+    already_executed = _RESUME_IDEMPOTENCY_STORE.check_and_mark(key)
+    return already_executed, key
+
+
+def _build_hil_resume_command(
+    interrupt_id: str,
+    approved: bool,
+    tool_name: str,
+) -> Command:
+    """Build LangGraph Command payload for HITL resume decision."""
+    decision: dict[str, Any]
+    if approved:
+        decision = {"type": "approve"}
+    else:
+        decision = {
+            "type": "reject",
+            "message": f"用户拒绝执行 {tool_name} 操作",
+        }
+    # Use interrupt-id keyed mapping to be explicit and future-proof for multi-interrupt scenarios.
+    return Command(resume={interrupt_id: {"decisions": [decision]}})
+
+
+def _plan_to_payload(plan: Any) -> dict[str, Any]:
+    """将 PlanState 转换为可序列化 payload（供 trace_event 使用）。"""
+    return {
+        "plan_id": getattr(plan, "plan_id", ""),
+        "complexity": getattr(plan, "complexity", "simple"),
+        "step_count": len(getattr(plan, "steps", [])),
+        "steps": [
+            {
+                "id": step.id,
+                "title": step.title,
+                "status": getattr(step.status, "value", str(step.status)),
+            }
+            for step in getattr(plan, "steps", [])
+        ],
+        "retrieval_hits": list(getattr(plan, "retrieval_hits", []) or []),
+    }
+
+
+async def _get_task_runtime_store() -> TaskRuntimeStore:
+    """Get or create TaskRuntimeStore (with persistent store when available)."""
+    global _TASK_RUNTIME
+
+    if _TASK_RUNTIME is not None:
+        return _TASK_RUNTIME
+
+    async with _TASK_RUNTIME_LOCK:
+        if _TASK_RUNTIME is None:
+            store = None
+            try:
+                store = await get_store()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"TaskRuntimeStore fallback to memory-only mode: {exc}")
+            _TASK_RUNTIME = TaskRuntimeStore(max_replans=1, store=store)
+    return _TASK_RUNTIME
+
+
+async def _call_runtime_method(
+    runtime: Any,
+    async_method: str,
+    sync_method: str,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """
+    Call planner runtime method with async/sync compatibility.
+
+    优先调用 async 方法（如 amark_xxx），不存在则回退 sync 方法（mark_xxx）。
+    """
+    method = getattr(runtime, async_method, None)
+    if method is None:
+        method = getattr(runtime, sync_method, None)
+    if method is None:
+        return None
+    result = method(*args, **kwargs)
+    if isawaitable(result):
+        return await result
+    return result
 
 
 async def _format_sse_event(event_type: str, data: dict[str, Any]) -> str:
@@ -176,6 +316,44 @@ async def _run_agent_stream(
     agent = await create_react_agent(sse_queue=event_queue, config=config)
     logger.info("✅ [API] ReAct Agent （create_agent） 创建完成，准备执行")
 
+    # Task Orchestration：在真正执行前创建结构化计划，并做轻量历史检索。
+    history_texts: list[str] = []
+    try:
+        prev_state = await agent.aget_state(config)
+        prev_messages = prev_state.values.get("messages", []) if prev_state else []
+        for msg in prev_messages[-30:]:
+            content = getattr(msg, "content", "")
+            if isinstance(content, str) and content.strip():
+                history_texts.append(content.strip())
+    except Exception as hist_err:  # noqa: BLE001
+        logger.debug(f"planner history load skipped: {hist_err}")
+
+    plan = _TASK_PLANNER.create_plan(
+        session_id=session_id,
+        user_goal=message,
+        history=history_texts,
+    )
+    task_runtime = await _get_task_runtime_store()
+    await task_runtime.aset_plan(session_id, plan)
+
+    await emit_trace_event(
+        event_queue,
+        stage="planner",
+        step="plan_created",
+        payload=_plan_to_payload(plan),
+    )
+    if plan.retrieval_hits:
+        await emit_trace_event(
+            event_queue,
+            stage="retrieval",
+            step="context_retrieved",
+            payload={
+                "plan_id": plan.plan_id,
+                "hits": len(plan.retrieval_hits),
+                "items": plan.retrieval_hits,
+            },
+        )
+
     await emit_trace_event(
         event_queue,
         stage="stream",
@@ -203,7 +381,17 @@ async def _run_agent_stream(
     # Run agent in background; cancelled in finally if SSE exits early
     logger.info(f"🚀 [API] asyncio.create_task(_execute_agent(...)) - agent.astream，会话ID={session_id}")
     agent_task = asyncio.create_task(
-        _execute_agent(agent, message, config, event_queue, user_id, tools_logger, sse_logger)
+        _execute_agent(
+            agent,
+            message,
+            config,
+            event_queue,
+            user_id,
+            tools_logger,
+            sse_logger,
+            planner_runtime=task_runtime,
+            session_id=session_id,
+        )
     )
 
     # Timeout monitoring task
@@ -213,7 +401,7 @@ async def _run_agent_stream(
     async def timeout_monitor():
         try:
             await asyncio.wait_for(agent_task, timeout=timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"⏰ [超时] Agent执行超时！阈值={timeout_seconds}s，会话ID={session_id}")
             await event_queue.put((
                 "error",
@@ -233,9 +421,8 @@ async def _run_agent_stream(
         while True:
             event_type, data = await event_queue.get()
 
-            if event_type == "thought":
-                if not _thought_logged:
-                    _thought_logged = True
+            if event_type == "thought" and not _thought_logged:
+                _thought_logged = True
 
             # Yield SSE event
             yield await _format_sse_event(event_type, data)
@@ -284,11 +471,11 @@ async def _run_agent_stream(
         logger.info(f"🧹 [SSE] finally块执行，总耗时={elapsed:.2f}s，agent_task.done={agent_task.done()}")
 
         if not agent_task.done():
-            logger.warning(f"⚠️ [SSE] SSE提前退出，取消agent_task")
+            logger.warning("⚠️ [SSE] SSE提前退出，取消agent_task")
             agent_task.cancel()
 
         if not timeout_task.done():
-            logger.debug(f"🧹 [SSE] 取消timeout_task")
+            logger.debug("🧹 [SSE] 取消timeout_task")
             timeout_task.cancel()
 
 
@@ -300,6 +487,9 @@ async def _execute_agent(
     user_id: str,
     tools_logger: "ToolsLogger",
     sse_logger: "SseLogger",
+    agent_input: Any | None = None,
+    planner_runtime: TaskRuntimeStore | None = None,
+    session_id: str | None = None,
 ) -> None:
     """
     Execute agent and push events to queue.
@@ -310,216 +500,369 @@ async def _execute_agent(
         config: LangGraph config with thread_id
         event_queue: SSEEventQueue
         tools_logger: ToolsLogger for tools logging
+        planner_runtime: 任务运行时状态机（可选）
+        session_id: 会话 ID（可选，默认从 config 读取）
         sse_logger: SseLogger for SSE event logging
     """
     # Prepare input
     execution_start = asyncio.get_event_loop().time()
     logger.info(f"🤔 [Agent] _execute_agent 开始执行，用户消息: '{message[:50]}{'...' if len(message) > 50 else ''}'")
-    messages_input = [HumanMessage(content=message)]
+    if agent_input is None:
+        messages_input = [HumanMessage(content=message)]
+        stream_input: Any = {"messages": messages_input}
+    else:
+        stream_input = agent_input
 
     seq = 0  # Event sequence counter
     final_answer = ""  # Accumulate streaming text for done payload
-    interrupted = False  # Track if HIL interrupt occurred
     llm_call_start = None  # Track LLM call timing
+    active_session_id = session_id
+    if not active_session_id:
+        configurable = config.get("configurable", {})
+        if isinstance(configurable, dict):
+            value = configurable.get("thread_id")
+            if isinstance(value, str):
+                active_session_id = value
 
-    try:
-        logger.info("🔄 [Agent] _execute_agent - agent.astream 循环，等待 LLM 响应...")
-        async for chunk in agent.astream(
-            {"messages": messages_input},
-            config=config,
-            context=AgentContext(sse_queue=event_queue, user_id=user_id),
-            stream_mode=["messages", "updates"],
-        ):
-            elapsed_since_start = asyncio.get_event_loop().time() - execution_start
-            mode = chunk[0]
-            data = chunk[1]
+    attempt = 0
+    max_attempts = 2 if (planner_runtime is not None and active_session_id) else 1
 
-            # 超时警告：如果执行时间超过配置超时的50%
-            if elapsed_since_start > settings.http_timeout * 0.5 and seq == 0:
-                logger.warning(f"⏱️ [超时警告] 执行时间已过半 ({elapsed_since_start:.1f}s / {settings.http_timeout}s)，但尚未收到任何事件")
-            if mode == "messages":  # messages mode
-                # Process AIMessageChunk
-                token, metadata = data
-
-                if isinstance(token, AIMessageChunk):
-                    if token.text:
-                        # 第一次收到文本时，记录 LLM 响应延迟
-                        if llm_call_start is None:
-                            llm_call_start = asyncio.get_event_loop().time()
-                            llm_latency = llm_call_start - execution_start
-                            logger.info(f"🤖 [Agent] LLM首次响应，延迟={llm_latency:.2f}s")
-
-                        seq += 1
-                        final_answer += token.text
-                         # debug 级别避免刷屏
-                        # Log thought event
-                        sse_logger.sse_event_thought(
-                            token_text=token.text,
-                            cumulative_tokens=seq,
-                        )
-                        # Push thought event
-                        await event_queue.put((
-                            "thought",
-                            {
-                                "content": token.text,
-                                "seq": seq,
-                            },
-                        ))
-
-                    if token.tool_call_chunks:
-                        # Fix D: tool_call_chunks are streaming fragments.
-                        # Only emit tool_start on the first chunk that carries the name.
-                        tool_call_start_time = asyncio.get_event_loop().time()
-                        for tool_call_chunk in token.tool_call_chunks:
-                            tool_name = tool_call_chunk.get("name", "")
-                            if not tool_name:
-                                # Subsequent chunks carry partial args only — skip
-                                continue
-                            seq += 1
-                            args = tool_call_chunk.get("args", {})
-
-                            logger.info(f"🔧 [Agent] LLM 决定调用工具: {tool_name}，参数: {str(args)[:80]}，执行时间={tool_call_start_time - execution_start:.2f}s")
-                            tools_logger.toolnode_execute_tool_start(
-                                tool_name=tool_name,
-                                args=args,
-                            )
-
-                            sse_logger.sse_event_tool_start(
-                                tool_name=tool_name,
-                                args=args,
-                            )
-
-                            # Push tool_start event
-                            await event_queue.put((
-                                "tool_start",
-                                {
-                                    "tool_name": tool_name,
-                                    "args": args,
-                                },
-                            ))
-
-            elif mode == "updates":  # updates mode
-                for source, update in data.items():
-                    seq += 1
-
-                    # Log tool_result
-                    if source == "tools":
-                        # Fix C: guard against empty messages list
-                        tool_messages = update.get("messages", [])
-                        if tool_messages:
-                            tool_message = tool_messages[-1]
-                            if isinstance(tool_message, (ToolMessage, AIMessage)):
-                                tool_name = getattr(tool_message, "name", None) or "unknown"
-                                result_preview = str(tool_message.content)[:100]
-                                tool_elapsed = asyncio.get_event_loop().time() - execution_start
-                                logger.info(f"📦 [Agent] 工具执行完成，工具={tool_name}，结果长度={len(str(tool_message.content))} 字符，总耗时={tool_elapsed:.2f}s，预览: '{result_preview}...'")
-                                tools_logger.toolnode_execute_tool_end(
-                                    tool_name=tool_name,
-                                    result_length=len(str(tool_message.content)),
-                                    latency_ms=0,
-                                    error=None,
-                                )
-
-                                sse_logger.sse_event_tool_result(
-                                    tool_name=tool_name,
-                                    result_length=len(str(tool_message.content)),
-                                )
-
-                                # Push tool_result event
-                                await event_queue.put((
-                                    "tool_result",
-                                    {
-                                        "tool_name": tool_name,
-                                        "result": tool_message.content,
-                                    },
-                                ))
-
-                    # Log hil_interrupt
-                    elif source == "__interrupt__":
-                        interrupted = True
-                        # Fix B: update is tuple[Interrupt], not a dict
-                        # Interrupt.id is the stable identifier (LangGraph >= 0.6)
-                        interrupts = update  # tuple[Interrupt, ...]
-                        interrupt_id = interrupts[0].id if interrupts else "unknown"
-
-                        logger.warning(f"⏸️ [Agent] HIL 中断触发，等待用户确认，interrupt_id={interrupt_id}")
-                        sse_logger.sse_event_hil_interrupt(
-                            interrupt_id=interrupt_id,
-                            tool_name="unknown",
-                            tool_args={},
-                        )
-
-                        # Push hil_interrupt event
-                        await event_queue.put((
-                            "hil_interrupt",
-                            {
-                                "interrupt_id": interrupt_id,
-                                "tool_name": "unknown",
-                                "tool_args": {},
-                            },
-                        ))
-
-        # After astream loop completes — emit done unless interrupted
-        # NOTE: LangGraph updates mode uses node names ("agent", "tools") as sources,
-        # never "end". Done must be emitted here after the stream exhausts.
-        total_elapsed = asyncio.get_event_loop().time() - execution_start
-        logger.info(f"✅ [Agent] astream 循环结束，interrupted={interrupted}，最终回答长度={len(final_answer)} 字符，总耗时={total_elapsed:.2f}s")
-        if not interrupted:
-            # Fetch final state messages to populate UI metadata panel
-            state_messages: list[dict[str, Any]] = []
-            try:
-                final_state = await agent.aget_state(config)
-                raw_msgs = final_state.values.get("messages", [])
-                for m in raw_msgs:
-                    if isinstance(m, HumanMessage):
-                        content = m.content if isinstance(m.content, str) else ""
-                        state_messages.append({"role": "user", "content": content})
-                    elif isinstance(m, AIMessage):
-                        content = m.content if isinstance(m.content, str) else ""
-                        state_messages.append({"role": "assistant", "content": content})
-                    elif isinstance(m, ToolMessage):
-                        state_messages.append({"role": "tool", "content": str(m.content)})
-            except Exception as state_err:
-                logger.warning(f"Could not fetch final agent state: {state_err}")
-
-            # Emit history slot update with actual token count so the UI reflects real usage
-            if state_messages:
-                history_content = "\n".join(
-                    m["content"] for m in state_messages if m.get("content")
-                )
-                history_tokens = count_tokens(history_content) if history_content else 0
-                await event_queue.put((
-                    "slot_update",
-                    {
-                        "name": "history",
-                        "display_name": "会话历史",
-                        "tokens": history_tokens,
-                        "enabled": True,
-                    },
-                ))
-
-            sse_logger.sse_event_done(
-                final_answer_length=len(final_answer),
-                total_tokens=seq,
+    while True:
+        interrupted = False
+        try:
+            logger.info(
+                "🔄 [Agent] _execute_agent - agent.astream 循环，等待 LLM 响应..."
+                f" (attempt={attempt + 1}/{max_attempts})"
             )
+            async for chunk in agent.astream(
+                stream_input,
+                config=config,
+                context=AgentContext(sse_queue=event_queue, user_id=user_id),
+                stream_mode=["messages", "updates"],
+            ):
+                elapsed_since_start = asyncio.get_event_loop().time() - execution_start
+                mode = chunk[0]
+                data = chunk[1]
 
-            await event_queue.put((
-                "done",
-                {
-                    "answer": final_answer,
-                    "total_tokens": seq,
-                    "messages": state_messages,
-                },
-            ))
+                # 超时警告：如果执行时间超过配置超时的50%
+                if elapsed_since_start > settings.http_timeout * 0.5 and seq == 0:
+                    logger.warning(
+                        f"⏱️ [超时警告] 执行时间已过半 ({elapsed_since_start:.1f}s / {settings.http_timeout}s)，但尚未收到任何事件"
+                    )
+                if mode == "messages":  # messages mode
+                    # Process AIMessageChunk
+                    token, metadata = data
+                    _ = metadata
 
-    except Exception as e:
-        error_elapsed = asyncio.get_event_loop().time() - execution_start
-        logger.error(f"❌ [Agent] 执行过程中发生异常: {e}，耗时={error_elapsed:.2f}s")
-        # Push error event
-        await event_queue.put((
-            "error",
-            {"message": str(e)},
-        ))
+                    if isinstance(token, AIMessageChunk):
+                        if token.text:
+                            # 第一次收到文本时，记录 LLM 响应延迟
+                            if llm_call_start is None:
+                                llm_call_start = asyncio.get_event_loop().time()
+                                llm_latency = llm_call_start - execution_start
+                                logger.info(f"🤖 [Agent] LLM首次响应，延迟={llm_latency:.2f}s")
+
+                            seq += 1
+                            final_answer += token.text
+                            # debug 级别避免刷屏
+                            # Log thought event
+                            sse_logger.sse_event_thought(
+                                token_text=token.text,
+                                cumulative_tokens=seq,
+                            )
+                            # Push thought event
+                            await event_queue.put(
+                                (
+                                    "thought",
+                                    {
+                                        "content": token.text,
+                                        "seq": seq,
+                                    },
+                                )
+                            )
+
+                        if token.tool_call_chunks:
+                            # Fix D: tool_call_chunks are streaming fragments.
+                            # Only emit tool_start on the first chunk that carries the name.
+                            tool_call_start_time = asyncio.get_event_loop().time()
+                            for tool_call_chunk in token.tool_call_chunks:
+                                tool_name = tool_call_chunk.get("name", "")
+                                if not tool_name:
+                                    # Subsequent chunks carry partial args only — skip
+                                    continue
+                                seq += 1
+                                args = tool_call_chunk.get("args", {})
+
+                                logger.info(
+                                    f"🔧 [Agent] LLM 决定调用工具: {tool_name}，参数: {str(args)[:80]}，执行时间={tool_call_start_time - execution_start:.2f}s"
+                                )
+                                tools_logger.toolnode_execute_tool_start(
+                                    tool_name=tool_name,
+                                    args=args,
+                                )
+
+                                sse_logger.sse_event_tool_start(
+                                    tool_name=tool_name,
+                                    args=args,
+                                )
+
+                                # Push tool_start event
+                                await event_queue.put(
+                                    (
+                                        "tool_start",
+                                        {
+                                            "tool_name": tool_name,
+                                            "args": args,
+                                        },
+                                    )
+                                )
+                                if planner_runtime is not None and active_session_id:
+                                    step = await _call_runtime_method(
+                                        planner_runtime,
+                                        "amark_next_step_running",
+                                        "mark_next_step_running",
+                                        active_session_id,
+                                        tool_name=tool_name,
+                                    )
+                                    if step is not None:
+                                        await emit_trace_event(
+                                            event_queue,
+                                            stage="planner",
+                                            step="step_running",
+                                            payload={
+                                                "session_id": active_session_id,
+                                                "step_id": step.id,
+                                                "title": step.title,
+                                                "tool_name": tool_name,
+                                            },
+                                        )
+
+                elif mode == "updates":  # updates mode
+                    for source, update in data.items():
+                        seq += 1
+
+                        # Log tool_result
+                        if source == "tools":
+                            # Fix C: guard against empty messages list
+                            tool_messages = update.get("messages", [])
+                            if tool_messages:
+                                tool_message = tool_messages[-1]
+                                if isinstance(tool_message, (ToolMessage, AIMessage)):
+                                    tool_name = getattr(tool_message, "name", None) or "unknown"
+                                    result_preview = str(tool_message.content)[:100]
+                                    tool_elapsed = asyncio.get_event_loop().time() - execution_start
+                                    logger.info(
+                                        f"📦 [Agent] 工具执行完成，工具={tool_name}，结果长度={len(str(tool_message.content))} 字符，总耗时={tool_elapsed:.2f}s，预览: '{result_preview}...'"
+                                    )
+                                    tools_logger.toolnode_execute_tool_end(
+                                        tool_name=tool_name,
+                                        result_length=len(str(tool_message.content)),
+                                        latency_ms=0,
+                                        error=None,
+                                    )
+
+                                    sse_logger.sse_event_tool_result(
+                                        tool_name=tool_name,
+                                        result_length=len(str(tool_message.content)),
+                                    )
+
+                                    # Push tool_result event
+                                    await event_queue.put(
+                                        (
+                                            "tool_result",
+                                            {
+                                                "tool_name": tool_name,
+                                                "result": tool_message.content,
+                                            },
+                                        )
+                                    )
+                                    if planner_runtime is not None and active_session_id:
+                                        try:
+                                            step = await _call_runtime_method(
+                                                planner_runtime,
+                                                "amark_running_step_succeeded",
+                                                "mark_running_step_succeeded",
+                                                active_session_id,
+                                            )
+                                        except ValueError:
+                                            step = None
+                                        if step is not None:
+                                            await emit_trace_event(
+                                                event_queue,
+                                                stage="planner",
+                                                step="step_succeeded",
+                                                payload={
+                                                    "session_id": active_session_id,
+                                                    "step_id": step.id,
+                                                    "title": step.title,
+                                                    "tool_name": tool_name,
+                                                },
+                                            )
+
+                        # Log hil_interrupt
+                        elif source == "__interrupt__":
+                            interrupted = True
+                            # Fix B: update is tuple[Interrupt], not a dict
+                            # Interrupt.id is the stable identifier (LangGraph >= 0.6)
+                            interrupts = update  # tuple[Interrupt, ...]
+                            interrupt_id = interrupts[0].id if interrupts else "unknown"
+
+                            logger.warning(
+                                f"⏸️ [Agent] HIL 中断触发，等待用户确认，interrupt_id={interrupt_id}"
+                            )
+                            sse_logger.sse_event_hil_interrupt(
+                                interrupt_id=interrupt_id,
+                                tool_name="unknown",
+                                tool_args={},
+                            )
+
+                            # Push hil_interrupt event
+                            await event_queue.put(
+                                (
+                                    "hil_interrupt",
+                                    {
+                                        "interrupt_id": interrupt_id,
+                                        "tool_name": "unknown",
+                                        "tool_args": {},
+                                    },
+                                )
+                            )
+
+            # After astream loop completes — emit done unless interrupted
+            # NOTE: LangGraph updates mode uses node names ("agent", "tools") as sources,
+            # never "end". Done must be emitted here after the stream exhausts.
+            total_elapsed = asyncio.get_event_loop().time() - execution_start
+            logger.info(
+                f"✅ [Agent] astream 循环结束，interrupted={interrupted}，最终回答长度={len(final_answer)} 字符，总耗时={total_elapsed:.2f}s"
+            )
+            if not interrupted:
+                # Fetch final state messages to populate UI metadata panel
+                state_messages: list[dict[str, Any]] = []
+                try:
+                    final_state = await agent.aget_state(config)
+                    raw_msgs = final_state.values.get("messages", [])
+                    for m in raw_msgs:
+                        if isinstance(m, HumanMessage):
+                            content = m.content if isinstance(m.content, str) else ""
+                            state_messages.append({"role": "user", "content": content})
+                        elif isinstance(m, AIMessage):
+                            content = m.content if isinstance(m.content, str) else ""
+                            state_messages.append({"role": "assistant", "content": content})
+                        elif isinstance(m, ToolMessage):
+                            state_messages.append({"role": "tool", "content": str(m.content)})
+                except Exception as state_err:
+                    logger.warning(f"Could not fetch final agent state: {state_err}")
+
+                # Emit history slot update with actual token count so the UI reflects real usage
+                if state_messages:
+                    history_content = "\n".join(
+                        m["content"] for m in state_messages if m.get("content")
+                    )
+                    history_tokens = count_tokens(history_content) if history_content else 0
+                    await event_queue.put(
+                        (
+                            "slot_update",
+                            {
+                                "name": "history",
+                                "display_name": "会话历史",
+                                "tokens": history_tokens,
+                                "enabled": True,
+                            },
+                        )
+                    )
+
+                if planner_runtime is not None and active_session_id:
+                    completed_plan = await _call_runtime_method(
+                        planner_runtime,
+                        "amark_plan_completed",
+                        "mark_plan_completed",
+                        active_session_id,
+                    )
+                    if completed_plan is not None:
+                        await emit_trace_event(
+                            event_queue,
+                            stage="planner",
+                            step="plan_completed",
+                            payload={
+                                "plan_id": completed_plan.plan_id,
+                                "step_count": len(completed_plan.steps),
+                                "replan_count": completed_plan.replan_count,
+                            },
+                        )
+
+                sse_logger.sse_event_done(
+                    final_answer_length=len(final_answer),
+                    total_tokens=seq,
+                )
+
+                await event_queue.put(
+                    (
+                        "done",
+                        {
+                            "answer": final_answer,
+                            "total_tokens": seq,
+                            "messages": state_messages,
+                        },
+                    )
+                )
+            return
+
+        except Exception as e:
+            error_elapsed = asyncio.get_event_loop().time() - execution_start
+            logger.error(f"❌ [Agent] 执行过程中发生异常: {e}，耗时={error_elapsed:.2f}s")
+
+            can_replan = (
+                planner_runtime is not None
+                and active_session_id is not None
+                and attempt < (max_attempts - 1)
+                and bool(
+                    await _call_runtime_method(
+                        planner_runtime,
+                        "ashould_replan",
+                        "should_replan",
+                        active_session_id,
+                        str(e),
+                    )
+                )
+            )
+            if can_replan and active_session_id is not None and planner_runtime is not None:
+                await emit_trace_event(
+                    event_queue,
+                    stage="replanner",
+                    step="triggered",
+                    status="start",
+                    payload={
+                        "session_id": active_session_id,
+                        "attempt": attempt + 1,
+                        "error": str(e),
+                    },
+                )
+                summary = await _call_runtime_method(
+                    planner_runtime,
+                    "aapply_replan",
+                    "apply_replan",
+                    active_session_id,
+                    str(e),
+                ) or {}
+                await emit_trace_event(
+                    event_queue,
+                    stage="replanner",
+                    step="plan_updated",
+                    payload=summary,
+                )
+                final_answer = ""
+                llm_call_start = None
+                attempt += 1
+                continue
+
+            # Push terminal error event
+            await event_queue.put(
+                (
+                    "error",
+                    {"message": str(e)},
+                )
+            )
+            return
 
 
 @router.get("")
@@ -662,64 +1005,101 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
         request.interrupt_id, request.approved, sse_queue=event_queue
     )
 
-    # If rejected, send done event immediately
-    if not request.approved:
-        async def rejected_stream() -> AsyncIterator[str]:
-            yield await _format_sse_event("hil_resolved", result)
-            while not event_queue.empty():
-                event_type, event_data = event_queue.get_nowait()
-                yield await _format_sse_event(event_type, event_data)
-            yield await _format_sse_event(
-                "done",
-                {
-                    "answer": result.get("message", "操作已取消"),
-                    "finish_reason": "rejected",
-                },
-            )
-
-        return StreamingResponse(
-            rejected_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-        )
-
-    # If approved, continue agent execution
-    # For P1, we'll send a success message and indicate tool was approved
-    # In a full implementation, this would resume actual agent execution
-    async def approved_stream() -> AsyncIterator[str]:
-        # Send approval confirmation
+    # Native resume path: recover from checkpoint and continue agent execution
+    async def resume_stream() -> AsyncIterator[str]:
+        # Always emit resolution event first
         yield await _format_sse_event("hil_resolved", result)
         while not event_queue.empty():
             event_type, event_data = event_queue.get_nowait()
             yield await _format_sse_event(event_type, event_data)
 
-        # Indicate that tool execution would continue here
-        # For P1, we simulate completion
         tool_name = interrupt_data.get("tool_name", "")
         tool_args = interrupt_data.get("tool_args", {})
 
-        # Simulate tool execution result
-        if tool_name == "send_email":
-            # Import and execute actual tool
-            from app.tools.send_email import send_email
-
-            tool_result = send_email.invoke(tool_args)
-            yield await _format_sse_event(
-                "tool_result",
-                {"tool_name": tool_name, "result": tool_result},
+        # Keep write-side-effect dedupe guard for send_email resume replay.
+        idempotency_key: str | None = None
+        if request.approved and tool_name == "send_email":
+            already_executed, idempotency_key = _check_and_mark_resume_idempotency(
+                request.session_id,
+                tool_name,
+                tool_args,
             )
+            if already_executed:
+                logger.warning(
+                    "Skip duplicated resume side-effect execution: "
+                    f"session={request.session_id}, key={idempotency_key}"
+                )
+                yield await _format_sse_event(
+                    "tool_result",
+                    {
+                        "tool_name": tool_name,
+                        "result": json.dumps(
+                            {
+                                "success": True,
+                                "skipped": True,
+                                "reason": "idempotent_replay",
+                                "idempotency_key": idempotency_key,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+                yield await _format_sse_event(
+                    "done",
+                    {
+                        "answer": f"{tool_name} 操作已完成（去重跳过）",
+                        "finish_reason": "approved",
+                    },
+                )
+                return
 
-        # Send completion
-        yield await _format_sse_event(
-            "done",
-            {
-                "answer": f"{tool_name} 操作已完成",
-                "finish_reason": "approved",
-            },
+        # Build native LangGraph resume command.
+        resume_command = _build_hil_resume_command(
+            interrupt_id=request.interrupt_id,
+            approved=request.approved,
+            tool_name=tool_name,
         )
 
+        config = {"configurable": {"thread_id": request.session_id}}
+        tools_logger = ToolsLogger(
+            session_id=request.session_id,
+            user_id=request.user_id,
+            thread_id=request.session_id,
+        )
+        sse_logger = SseLogger(session_id=request.session_id, user_id=request.user_id)
+        agent = await create_react_agent(sse_queue=event_queue, config=config)
+
+        agent_task = asyncio.create_task(
+            _execute_agent(
+                agent=agent,
+                message=f"[HIL_RESUME] {tool_name}",
+                config=config,
+                event_queue=event_queue,
+                user_id=request.user_id,
+                tools_logger=tools_logger,
+                sse_logger=sse_logger,
+                agent_input=resume_command,
+            )
+        )
+
+        try:
+            while True:
+                event_type, event_data = await event_queue.get()
+
+                # If resume execution failed after optimistic mark, rollback idempotency.
+                if event_type == "error" and idempotency_key:
+                    _RESUME_IDEMPOTENCY_STORE.discard(idempotency_key)
+
+                yield await _format_sse_event(event_type, event_data)
+
+                if event_type in ("done", "error"):
+                    break
+        finally:
+            if not agent_task.done():
+                agent_task.cancel()
+
     return StreamingResponse(
-        approved_stream(),
+        resume_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

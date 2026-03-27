@@ -1,68 +1,37 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { motion } from 'framer-motion';
 import { Activity, Bot, Layers } from 'lucide-react';
 
-import { ChatInput } from '@/components/ChatInput';
+import { ChatProvider } from '@/components/assistant/ChatProvider';
+import { AssistantComposer } from '@/components/assistant/AssistantComposer';
+import { ThemeToggleButton } from '@/components/assistant/ThemeToggleButton';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { ContextPanel } from '@/components/ContextPanel';
 import { ExecutionTracePanel } from '@/components/ExecutionTracePanel';
 import { MessageList } from '@/components/MessageList';
-import { getChatResumeUrl, getChatStreamUrl } from '@/lib/api-config';
-import { sseManager } from '@/lib/sse-manager';
+import { getChatResumeUrl } from '@/lib/api-config';
 import { cn } from '@/lib/utils';
+import { THEME_STORAGE_KEY, applyTheme, resolveInitialTheme, type ThemeMode } from '@/store/theme';
 import { useSession } from '@/store/use-session';
-import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
-import type { SessionMeta, SlotDetailsResponse, StateMessage } from '@/types/context-window';
-import type { TraceEvent } from '@/types/trace';
-import type { TraceBlock } from '@/types/trace';
+import { useSSEHandlers, isTraceEvent, isTraceBlock } from '@/hooks/useSSEHandlers';
+import type { InterruptData } from '@/hooks/useSSEHandlers';
+import type { StateMessage } from '@/types/context-window';
 
-interface InterruptData {
-  interrupt_id: string;
-  tool_name: string;
-  tool_args: Record<string, unknown>;
-  risk_level: 'high' | 'medium' | 'low';
-  message: string;
-}
+// ---------------------------------------------------------------------------
+// SSE stream consumer (used by HIL confirm/cancel flows)
+// ---------------------------------------------------------------------------
 
 interface ParsedSSEEvent {
   event: string;
   data: Record<string, unknown>;
 }
 
-function isTraceEvent(data: unknown): data is TraceEvent {
-  if (typeof data !== 'object' || data === null) {
-    return false;
-  }
-  const record = data as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    typeof record.timestamp === 'string' &&
-    typeof record.stage === 'string' &&
-    typeof record.step === 'string' &&
-    typeof record.status === 'string' &&
-    typeof record.payload === 'object' &&
-    record.payload !== null
-  );
-}
-
-function isTraceBlock(data: unknown): data is TraceBlock {
-  if (typeof data !== 'object' || data === null) return false;
-  const record = data as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    typeof record.timestamp === 'string' &&
-    typeof record.type === 'string' &&
-    typeof record.status === 'string' &&
-    typeof record.duration_ms === 'number'
-  );
-}
-
 async function consumeSSEStream(
   response: Response,
-  onEvent: (evt: ParsedSSEEvent) => void
+  onEvent: (evt: ParsedSSEEvent) => void,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) return;
@@ -103,6 +72,10 @@ async function consumeSSEStream(
   }
 }
 
+// ---------------------------------------------------------------------------
+// HomePage
+// ---------------------------------------------------------------------------
+
 export default function HomePage() {
   const {
     messages,
@@ -113,394 +86,185 @@ export default function HomePage() {
     contextWindowData,
     stateMessages,
     sessionMeta,
-    addMessage,
     addTraceEvent,
     addTraceBlock,
-    clearTraceBlocks,
-    setContextWindowData,
-    setSlotDetails,
-    setStateMessages,
-    setSessionMeta,
-    incrementTurn,
+    addMessage,
     setLoading,
     setError,
   } = useSession();
 
   const [turnStatuses, setTurnStatuses] = useState<Record<string, 'done' | 'error'>>({});
-
-  const setTurnStatus = (turnId: string, status: 'done' | 'error') => {
-    setTurnStatuses((prev) => ({ ...prev, [turnId]: status }));
-  };
-
   const [lastActivityTime, setLastActivityTime] = useState<number | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [currentInterrupt, setCurrentInterrupt] = useState<InterruptData | null>(null);
   const [activeTab, setActiveTab] = useState<'chain' | 'context'>('chain');
-  const sseHandlersRegistered = useRef(false);
-  const loadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>('light');
 
-  const clearLoadTimeout = () => {
-    if (loadTimeoutRef.current) {
-      clearTimeout(loadTimeoutRef.current);
-      loadTimeoutRef.current = null;
-    }
-  };
+  const setTurnStatus = useCallback((turnId: string, status: 'done' | 'error') => {
+    setTurnStatuses((prev) => ({ ...prev, [turnId]: status }));
+  }, []);
 
-  const handleSendMessage = async (
-    message: string,
-    skillId?: string | null,
-    mode?: string | null
-  ) => {
-    addMessage({ role: 'user', content: message });
-    incrementTurn();
-    // Reset context data for the new turn (fixes real-time refresh bug)
-    setContextWindowData(EMPTY_CONTEXT_DATA);
-    setSlotDetails([]);
-    setStateMessages([]);
-    setSessionMeta(null);
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    const storageTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setTheme(resolveInitialTheme(storageTheme, prefersDark));
+  }, []);
 
-    try {
-      const sessionId = useSession.getState().sessionId;
-      const userId = useSession.getState().userId;
+  useEffect(() => {
+    const root = document.documentElement;
+    applyTheme(theme, root);
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
-      sseManager.connect(getChatStreamUrl(), {
-        message,
-        session_id: sessionId,
-        user_id: userId,
-        ...(skillId ? { skill_id: skillId } : {}),
-        ...(mode ? { invocation_mode: mode } : {}),
-      });
+  const handleToggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }, []);
 
-      clearLoadTimeout();
-      loadTimeoutRef.current = setTimeout(() => {
-        setError('请求超时，请检查后端与 LLM（如 Ollama）是否可用');
-        setLoading(false);
-        sseManager.disconnect();
-        loadTimeoutRef.current = null;
-      }, 120_000);
+  const handleHILInterrupt = useCallback((data: InterruptData) => {
+    setCurrentInterrupt(data);
+    setShowConfirmModal(true);
+  }, []);
 
-      if (!sseHandlersRegistered.current) {
-        sseHandlersRegistered.current = true;
+  // SSE handlers are registered here; handleSendMessage is passed to ChatProvider
+  const { handleSendMessage } = useSSEHandlers({
+    onHILInterrupt: handleHILInterrupt,
+    setTurnStatus,
+    setLastActivityTime,
+  });
 
-        sseManager.on('trace_event', ({ data }) => {
-          if (isTraceEvent(data)) {
+  // ---- HIL confirm/cancel (use direct fetch + consumeSSEStream) ----
+
+  const handleConfirm = useCallback(
+    async (interruptId: string) => {
+      setShowConfirmModal(false);
+      setCurrentInterrupt(null);
+      setLoading(true);
+
+      try {
+        const response = await fetch(getChatResumeUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: useSession.getState().sessionId,
+            user_id: useSession.getState().userId,
+            interrupt_id: interruptId,
+            approved: true,
+          }),
+        });
+
+        await consumeSSEStream(response, ({ event, data }) => {
+          if (event === 'trace_event' && isTraceEvent(data)) {
             addTraceEvent(data);
+            return;
           }
-        });
-
-        sseManager.on('trace_block', ({ data }) => {
-          if (isTraceBlock(data)) {
+          if (event === 'trace_block' && isTraceBlock(data)) {
             addTraceBlock(data);
+            return;
+          }
+          if (event === 'tool_result') return;
+          if (event === 'done') {
+            setLoading(false);
           }
         });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : '确认操作失败');
+        setLoading(false);
+      }
+    },
+    [addTraceEvent, addTraceBlock, setLoading, setError],
+  );
 
-        sseManager.on('slot_details', ({ data }) => {
-          const payload = data as SlotDetailsResponse;
-          if (payload.slots) {
-            setSlotDetails(payload.slots);
+  const handleCancel = useCallback(
+    async (interruptId: string) => {
+      setShowConfirmModal(false);
+      setCurrentInterrupt(null);
+      setLoading(true);
+
+      try {
+        const response = await fetch(getChatResumeUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: useSession.getState().sessionId,
+            user_id: useSession.getState().userId,
+            interrupt_id: interruptId,
+            approved: false,
+          }),
+        });
+
+        await consumeSSEStream(response, ({ event, data }) => {
+          if (event === 'trace_event' && isTraceEvent(data)) {
+            addTraceEvent(data);
+            return;
           }
-        });
-
-        sseManager.on('context_window', ({ data }) => {
-          setContextWindowData(data as any);
-        });
-
-        sseManager.on('slot_update', ({ data }) => {
-          const updated = data as {
-            name: string;
-            display_name: string;
-            tokens: number;
-            enabled: boolean;
-            content?: string;
-          };
-          // 合并单个 slot 到 slotDetails
-          const currentSlots = useSession.getState().slotDetails;
-          const oldTokens = currentSlots.find((s) => s.name === updated.name)?.tokens ?? 0;
-          const merged = currentSlots.filter((s) => s.name !== updated.name);
-          merged.push({ ...updated, content: updated.content ?? '' });
-          setSlotDetails(merged);
-          // 同步更新 contextWindowData 的 total_used / total_remaining / slotUsage
-          const ctx = useSession.getState().contextWindowData;
-          if (ctx) {
-            const delta = updated.tokens - oldTokens;
-            const updatedSlotUsage = ctx.slotUsage.map((s) =>
-              s.name === updated.name ? { ...s, used: updated.tokens } : s
-            );
-            setContextWindowData({
-              ...ctx,
-              slotUsage: updatedSlotUsage,
-              budget: {
-                ...ctx.budget,
-                usage: {
-                  ...ctx.budget.usage,
-                  total_used: ctx.budget.usage.total_used + delta,
-                  total_remaining: Math.max(0, ctx.budget.usage.total_remaining - delta),
-                },
-              },
-            });
+          if (event === 'trace_block' && isTraceBlock(data)) {
+            addTraceBlock(data);
+            return;
           }
-        });
-
-        sseManager.on('session_metadata', ({ data }) => {
-          setSessionMeta(data as SessionMeta);
-        });
-
-        sseManager.on('thought', ({ data }) => {
-          const { content } = data as { content: string };
-
-          const sessionState = useSession.getState();
-          const lastMsg = sessionState.messages[sessionState.messages.length - 1];
-
-          if (lastMsg && lastMsg.role === 'assistant') {
-            const text = lastMsg.content ? `${lastMsg.content}${content}` : content;
-            const updatedMsg = { ...lastMsg, content: text };
-            useSession.setState({
-              messages: [...sessionState.messages.slice(0, -1), updatedMsg],
-            });
-          } else {
+          if (event === 'done') {
             addMessage({
               role: 'assistant',
-              content,
+              content: String((data as any).answer || '操作已取消'),
             });
+            setLoading(false);
           }
         });
-
-        sseManager.on('token_update', ({ data }) => {
-          const { current, budget } = data as {
-            current: number;
-            budget: number;
-          };
-
-          const ctx = useSession.getState().contextWindowData;
-          if (ctx) {
-            const remaining = Math.max(0, ctx.budget.working_budget - current);
-            useSession.setState({
-              contextWindowData: {
-                ...ctx,
-                budget: {
-                  ...ctx.budget,
-                  usage: {
-                    ...ctx.budget.usage,
-                    total_used: current,
-                    total_remaining: remaining,
-                  },
-                },
-              },
-            });
-          }
-        });
-
-        sseManager.on('hil_interrupt', ({ data }) => {
-          const interruptData = data as InterruptData;
-
-          clearLoadTimeout();
-          setLoading(false);
-          setCurrentInterrupt(interruptData);
-          setShowConfirmModal(true);
-          sseManager.disconnect();
-        });
-
-        sseManager.on('done', ({ data }) => {
-          clearLoadTimeout();
-
-          // 解析后端 state["messages"]
-          const payload = data as { messages?: StateMessage[]; answer?: string };
-          if (payload.messages && payload.messages.length > 0) {
-            const { messages: frontendMsgs } = useSession.getState();
-            // 后端消息数 >= 前端消息数时替换（后端数据更完整）
-            if (payload.messages.length >= frontendMsgs.length) {
-              setStateMessages(payload.messages);
-            }
-          }
-
-          // 兜底：若流式 thought 事件未产生任何 assistant 消息，用 done.answer 补全
-          if (payload.answer) {
-            const { messages: frontendMsgs } = useSession.getState();
-            const lastMsg = frontendMsgs[frontendMsgs.length - 1];
-            if (!lastMsg || lastMsg.role !== 'assistant') {
-              addMessage({ role: 'assistant', content: payload.answer });
-            }
-          }
-
-          // 记录 Turn 完成状态（供 ExecutionTracePanel badge 使用）
-          const turnId = useSession.getState().currentTurnId;
-          if (turnId) {
-            setTurnStatus(turnId, 'done');
-          }
-
-          setLastActivityTime(Date.now());
-          setLoading(false);
-          sseManager.disconnect();
-        });
-
-        sseManager.on('error', ({ data }) => {
-          const { message } = data as { message: string };
-
-          // 记录 Turn 失败状态
-          const turnId = useSession.getState().currentTurnId;
-          if (turnId) {
-            setTurnStatus(turnId, 'error');
-          }
-
-          clearLoadTimeout();
-          setError(message);
-          setLoading(false);
-          sseManager.disconnect();
-        });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : '取消操作失败');
+        setLoading(false);
       }
-
-      sseManager.on('skill_invoked', ({ data }) => {
-        const { skill_id, description } = data as { skill_id: string; description: string };
-        const currentSlots = useSession.getState().slotDetails;
-        const updated = currentSlots.map((s) =>
-          s.name === 'skill_registry'
-            ? { ...s, content: `[手动激活] ${skill_id}: ${description}` }
-            : s
-        );
-        setSlotDetails(updated);
-      });
-    } catch (error) {
-      clearLoadTimeout();
-      setError(error instanceof Error ? error.message : '发送消息失败');
-      setLoading(false);
-    }
-  };
-
-  const handleConfirm = async (interruptId: string) => {
-    setShowConfirmModal(false);
-    setCurrentInterrupt(null);
-    setLoading(true);
-
-    try {
-      const response = await fetch(getChatResumeUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: useSession.getState().sessionId,
-          user_id: useSession.getState().userId,
-          interrupt_id: interruptId,
-          approved: true,
-        }),
-      });
-
-      await consumeSSEStream(response, ({ event, data }) => {
-        if (event === 'trace_event') {
-          if (isTraceEvent(data)) {
-            addTraceEvent(data);
-          }
-          return;
-        }
-
-        if (event === 'trace_block') {
-          if (isTraceBlock(data)) {
-            addTraceBlock(data);
-          }
-          return;
-        }
-
-        if (event === 'tool_result') {
-          return;
-        }
-
-        if (event === 'done') {
-          setLoading(false);
-        }
-      });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '确认操作失败');
-      setLoading(false);
-    }
-  };
-
-  const handleCancel = async (interruptId: string) => {
-    setShowConfirmModal(false);
-    setCurrentInterrupt(null);
-    setLoading(true);
-
-    try {
-      const response = await fetch(getChatResumeUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: useSession.getState().sessionId,
-          user_id: useSession.getState().userId,
-          interrupt_id: interruptId,
-          approved: false,
-        }),
-      });
-
-      await consumeSSEStream(response, ({ event, data }) => {
-        if (event === 'trace_event') {
-          if (isTraceEvent(data)) {
-            addTraceEvent(data);
-          }
-          return;
-        }
-
-        if (event === 'trace_block') {
-          if (isTraceBlock(data)) {
-            addTraceBlock(data);
-          }
-          return;
-        }
-
-        if (event === 'done') {
-          addMessage({
-            role: 'assistant',
-            content: String((data as any).answer || '操作已取消'),
-          });
-          setLoading(false);
-        }
-      });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '取消操作失败');
-      setLoading(false);
-    }
-  };
+    },
+    [addTraceEvent, addTraceBlock, addMessage, setLoading, setError],
+  );
 
   return (
-    <main className="flex h-screen flex-col bg-bg-base text-text-primary">
+    <main className="gemini-app flex h-screen flex-col text-text-primary">
+      {/* Header */}
       <motion.header
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="border-b border-border bg-bg-card px-6 py-4 shadow-sm"
+        className="border-b border-border/40 bg-bg-base/70 px-4 py-4 backdrop-blur-md md:px-8"
       >
-        <div className="flex items-center justify-between">
+        <div className="mx-auto flex w-full max-w-[1700px] items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary shadow-lg">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-secondary shadow-[0_8px_26px_rgba(66,133,244,0.35)]">
               <Bot className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">Multi-Tool AI Agent</h1>
-              <p className="text-xs text-text-muted">
-                初始化 → Context → ReAct → Memory 全链路可视化
-              </p>
+              <h1 className="text-base font-semibold tracking-tight md:text-lg">Multi-Tool AI Agent</h1>
+              {/* <p className="text-xs text-text-muted">Gemini 风格主题 · assistant-ui</p> */}
             </div>
           </div>
+          <ThemeToggleButton theme={theme} onToggle={handleToggleTheme} />
         </div>
       </motion.header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <section className="flex flex-1 flex-col bg-bg-base">
-          <MessageList
-            messages={messages}
-            isLoading={isLoading}
-            stateMessages={stateMessages}
-            compressionEvents={contextWindowData.compressionEvents}
-          />
-          <ChatInput onSend={handleSendMessage} disabled={isLoading} />
+      {/* Main content */}
+      <div className="flex flex-1 gap-3 overflow-hidden px-3 pb-3 pt-2 md:gap-4 md:px-6 md:pb-5">
+        {/* Chat area — wrapped with ChatProvider for assistant-ui runtime */}
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[30px] border border-border/35 bg-bg-base/80 backdrop-blur-md">
+          <ChatProvider onSendMessage={handleSendMessage}>
+            <MessageList
+              messages={messages}
+              isLoading={isLoading}
+              stateMessages={stateMessages}
+              compressionEvents={contextWindowData.compressionEvents}
+            />
+            <AssistantComposer />
+          </ChatProvider>
         </section>
 
-        <aside className="flex w-[440px] flex-col border-l border-border bg-bg-card">
-          <div className="grid grid-cols-2 border-b border-border bg-bg-alt">
+        {/* Sidebar */}
+        <aside className="hidden w-[420px] flex-col overflow-hidden rounded-[30px] border border-border/35 bg-bg-card/75 backdrop-blur-md lg:flex">
+          <div className="grid grid-cols-2 border-b border-border/60 bg-bg-alt/65">
             <button
               onClick={() => setActiveTab('chain')}
               className={cn(
                 'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
-                activeTab === 'chain' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+                activeTab === 'chain'
+                  ? 'text-primary'
+                  : 'text-text-muted hover:text-text-secondary',
               )}
             >
               <Activity className="w-4 h-4" />
@@ -519,7 +283,7 @@ export default function HomePage() {
                 'relative flex items-center justify-center gap-1 px-2 py-3 text-xs font-medium transition-all duration-200',
                 activeTab === 'context'
                   ? 'text-primary'
-                  : 'text-text-muted hover:text-text-secondary'
+                  : 'text-text-muted hover:text-text-secondary',
               )}
             >
               <Layers className="w-4 h-4" />
@@ -563,11 +327,16 @@ export default function HomePage() {
         </aside>
       </div>
 
+      {/* HIL Confirm Modal */}
       <ConfirmModal
         isOpen={showConfirmModal}
         interrupt={currentInterrupt}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
+        onConfirm={(interruptId) => {
+          void handleConfirm(interruptId);
+        }}
+        onCancel={(interruptId) => {
+          void handleCancel(interruptId);
+        }}
       />
     </main>
   );

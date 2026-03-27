@@ -84,7 +84,7 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
       {/* Content (collapsible) */}
       {(isExpanded || preview) && slot.content && (
         <motion.div
-          initial={preview ? false : { opacity: 0, height: 0 }}
+          initial={preview ? undefined : { opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           transition={{ duration: 0.2 }}
           className="mt-3 pt-3 border-t border-border"
@@ -101,7 +101,7 @@ export function SlotDetail({ slot, preview = false }: SlotDetailProps) {
       {/* Empty state */}
       {(isExpanded || preview) && !slot.content && (
         <motion.div
-          initial={preview ? false : { opacity: 0, height: 0 }}
+          initial={preview ? undefined : { opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           transition={{ duration: 0.2 }}
           className="mt-3 pt-3 border-t border-border"

@@ -19,6 +19,9 @@ export interface TraceBlock {
   timestamp: string;
   type:
     | 'turn_start'
+    | 'planning'
+    | 'retrieval'
+    | 'replanning'
     | 'thinking'
     | 'tool_call'
     | 'answer'
@@ -64,6 +67,22 @@ export interface TraceBlock {
     stage: string;
     step: string;
   };
+  answer?: {
+    content_preview: string;
+    char_count: number;
+  };
+  planning?: {
+    plan_id: string;
+    step_count: number;
+    complexity: string;
+  };
+  retrieval?: {
+    hits: number;
+  };
+  replanning?: {
+    attempt: number;
+    error: string;
+  };
 
   turnId?: string;
 }
@@ -71,6 +90,9 @@ export interface TraceBlock {
 /** Block types visible in simple (user-friendly) mode. */
 export const USER_VISIBLE_BLOCKS = new Set<TraceBlock['type']>([
   'turn_start',
+  'planning',
+  'retrieval',
+  'replanning',
   'thinking',
   'tool_call',
   'answer',

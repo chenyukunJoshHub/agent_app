@@ -1,87 +1,98 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
-  /* ==================== 颜色系统 ==================== */
+  /* Brand */
+  --color-primary: #4285f4;
+  --color-primary-hover: #1a73e8;
+  --color-primary-light: rgba(66, 133, 244, 0.18);
+  --color-secondary: #8ab4f8;
+  --color-secondary-hover: #a9c8fb;
 
-  /* 主色调 */
-  --color-primary: #5E6AD2;
-  --color-primary-hover: #4F5BC4;
-  --color-primary-light: rgba(94, 106, 210, 0.1);
+  --color-accent: #34a853;
+  --color-accent-hover: #2b9348;
+  --color-warning: #fbbc05;
+  --color-danger: #ea4335;
+  --color-info: #4285f4;
 
-  /* 次要色 */
-  --color-secondary: #6366F1;
-  --color-secondary-hover: #818CF8;
+  /* Light palette */
+  --color-bg-base-light: #f2f5fa;
+  --color-bg-alt-light: #edf1f8;
+  --color-bg-muted-light: #e4e9f2;
+  --color-bg-card-light: #f8f9fb;
+  --color-bg-overlay-light: rgba(15, 23, 42, 0.35);
 
-  /* 强调色 */
-  --color-accent: #22C55E;
-  --color-accent-hover: #16A34A;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
-  --color-info: #3B82F6;
+  --color-border-base-light: rgba(15, 23, 42, 0.12);
+  --color-border-muted-light: rgba(15, 23, 42, 0.08);
+  --color-border-strong-light: rgba(15, 23, 42, 0.2);
 
-  /* 浅色模式背景 */
-  --color-bg-base: #FFFFFF;
-  --color-bg-alt: #F8FAFC;
-  --color-bg-muted: #F1F5F9;
-  --color-bg-card: #FFFFFF;
-  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+  --color-text-primary-light: #1f232d;
+  --color-text-secondary-light: #586174;
+  --color-text-muted-light: #7f8794;
+  --color-text-disabled-light: #9ca3af;
+  --color-text-inverse-light: #f8fbff;
 
-  /* 浅色模式边框 */
-  --color-border-base: #E2E8F0;
-  --color-border-muted: #F1F5F9;
-  --color-border-strong: #CBD5E1;
+  /* Dark palette */
+  --color-bg-base-dark: #090c14;
+  --color-bg-alt-dark: #0d121d;
+  --color-bg-muted-dark: #171d2b;
+  --color-bg-card-dark: #151b28;
+  --color-bg-overlay-dark: rgba(2, 6, 23, 0.72);
 
-  /* 浅色模式文本 */
-  --color-text-primary: #0F172A;
-  --color-text-secondary: #475569;
-  --color-text-muted: #94A3B8;
-  --color-text-disabled: #CBD5E1;
-  --color-text-inverse: #FFFFFF;
+  --color-border-base-dark: rgba(255, 255, 255, 0.13);
+  --color-border-muted-dark: rgba(255, 255, 255, 0.08);
+  --color-border-strong-dark: rgba(255, 255, 255, 0.2);
 
-  /* 语义色 - 浅色 */
-  --color-success-bg: #DCFCE7;
-  --color-success-text: #15803D;
-  --color-warning-bg: #FEF3C7;
-  --color-warning-text: #A16207;
-  --color-error-bg: #FEE2E2;
-  --color-error-text: #B91C1C;
-  --color-info-bg: #DBEAFE;
-  --color-info-text: #1D4ED8;
+  --color-text-primary-dark: #e9eefc;
+  --color-text-secondary-dark: #a9b3c7;
+  --color-text-muted-dark: #7d8698;
+  --color-text-disabled-dark: #5f6675;
+  --color-text-inverse-dark: #0b0f17;
 
-  /* 深色模式背景 */
-  --color-bg-base-dark: #0A0A0F;
-  --color-bg-alt-dark: #0F1014;
-  --color-bg-muted-dark: #15161A;
-  --color-bg-card-dark: #1A1B1E;
-  --color-bg-elevated-dark: #222328;
-  --color-bg-overlay-dark: rgba(0, 0, 0, 0.7);
+  /* Active theme defaults */
+  --color-bg-base: var(--color-bg-base-light);
+  --color-bg-alt: var(--color-bg-alt-light);
+  --color-bg-muted: var(--color-bg-muted-light);
+  --color-bg-card: var(--color-bg-card-light);
+  --color-bg-overlay: var(--color-bg-overlay-light);
 
-  /* 深色模式边框 */
-  --color-border-base-dark: rgba(255, 255, 255, 0.08);
-  --color-border-muted-dark: rgba(255, 255, 255, 0.05);
-  --color-border-strong-dark: rgba(255, 255, 255, 0.15);
+  --color-border-base: var(--color-border-base-light);
+  --color-border-muted: var(--color-border-muted-light);
+  --color-border-strong: var(--color-border-strong-light);
 
-  /* 深色模式文本 */
-  --color-text-primary-dark: #EDEDEF;
-  --color-text-secondary-dark: #A1A1AA;
-  --color-text-muted-dark: #71717A;
-  --color-text-disabled-dark: #52525B;
-  --color-text-inverse-dark: #0A0A0F;
+  --color-text-primary: var(--color-text-primary-light);
+  --color-text-secondary: var(--color-text-secondary-light);
+  --color-text-muted: var(--color-text-muted-light);
+  --color-text-disabled: var(--color-text-disabled-light);
+  --color-text-inverse: var(--color-text-inverse-light);
 
-  /* ReAct 链路颜色 */
-  --react-thought: #A78BFA;
-  --react-tool-call: #3B82F6;
-  --react-tool-result: #14B8A6;
-  --react-final: #22C55E;
-  --react-interrupt: #F59E0B;
+  /* Semantic */
+  --color-success-bg: #dcfce7;
+  --color-success-text: #15803d;
+  --color-warning-bg: #fff4ce;
+  --color-warning-text: #a16207;
+  --color-error-bg: #fee2e2;
+  --color-error-text: #b91c1c;
+  --color-info-bg: #dbeafe;
+  --color-info-text: #1d4ed8;
 
-  /* ==================== 排版系统 ==================== */
-  --font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* ReAct */
+  --react-thought: #a78bfa;
+  --react-tool-call: #3b82f6;
+  --react-tool-result: #14b8a6;
+  --react-final: #22c55e;
+  --react-interrupt: #f59e0b;
+
+  /* Gemini ambience */
+  --color-gemini-glow-a: rgba(66, 133, 244, 0.16);
+  --color-gemini-glow-b: rgba(138, 180, 248, 0.13);
+  --color-shadow-soft: rgba(15, 23, 42, 0.16);
+
+  /* Typography */
+  --font-family-base: 'Manrope', 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
   --font-family-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
 
-  /* 字体大小 */
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
   --text-base: 1rem;
@@ -91,19 +102,17 @@
   --text-3xl: 1.875rem;
   --text-4xl: 2.25rem;
 
-  /* 字重 */
   --font-light: 300;
   --font-normal: 400;
   --font-medium: 500;
   --font-semibold: 600;
   --font-bold: 700;
 
-  /* 行高 */
   --leading-tight: 1.25;
   --leading-normal: 1.5;
   --leading-relaxed: 1.625;
 
-  /* ==================== 间距系统 ==================== */
+  /* Spacing */
   --spacing-0: 0;
   --spacing-px: 1px;
   --spacing-0_5: 2px;
@@ -123,7 +132,7 @@
   --spacing-20: 80px;
   --spacing-24: 96px;
 
-  /* ==================== 圆角系统 ==================== */
+  /* Radius */
   --radius-none: 0;
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -133,13 +142,13 @@
   --radius-3xl: 24px;
   --radius-full: 9999px;
 
-  /* ==================== 阴影系统 ==================== */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 4px 10px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 10px 24px rgba(15, 23, 42, 0.16);
+  --shadow-xl: 0 22px 42px rgba(15, 23, 42, 0.2);
 
-  /* ==================== 动画系统 ==================== */
+  /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.67, 0, 0.83, 0.67);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
@@ -151,7 +160,7 @@
   --duration-slow: 300ms;
   --duration-slower: 500ms;
 
-  /* ==================== Z-Index 层级 ==================== */
+  /* Z-index */
   --z-dropdown: 1000;
   --z-sticky: 1020;
   --z-fixed: 1030;
@@ -161,9 +170,65 @@
   --z-tooltip: 1070;
 }
 
-/* ==================== 深色模式 ==================== */
+:root,
+html[data-theme='light'] {
+  color-scheme: light;
+  --color-bg-base: var(--color-bg-base-light);
+  --color-bg-alt: var(--color-bg-alt-light);
+  --color-bg-muted: var(--color-bg-muted-light);
+  --color-bg-card: var(--color-bg-card-light);
+  --color-bg-overlay: var(--color-bg-overlay-light);
+
+  --color-border-base: var(--color-border-base-light);
+  --color-border-muted: var(--color-border-muted-light);
+  --color-border-strong: var(--color-border-strong-light);
+
+  --color-text-primary: var(--color-text-primary-light);
+  --color-text-secondary: var(--color-text-secondary-light);
+  --color-text-muted: var(--color-text-muted-light);
+  --color-text-disabled: var(--color-text-disabled-light);
+  --color-text-inverse: var(--color-text-inverse-light);
+
+  --color-gemini-glow-a: rgba(66, 133, 244, 0.16);
+  --color-gemini-glow-b: rgba(138, 180, 248, 0.13);
+  --color-shadow-soft: rgba(15, 23, 42, 0.16);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-base: var(--color-bg-base-dark);
+  --color-bg-alt: var(--color-bg-alt-dark);
+  --color-bg-muted: var(--color-bg-muted-dark);
+  --color-bg-card: var(--color-bg-card-dark);
+  --color-bg-overlay: var(--color-bg-overlay-dark);
+
+  --color-border-base: var(--color-border-base-dark);
+  --color-border-muted: var(--color-border-muted-dark);
+  --color-border-strong: var(--color-border-strong-dark);
+
+  --color-text-primary: var(--color-text-primary-dark);
+  --color-text-secondary: var(--color-text-secondary-dark);
+  --color-text-muted: var(--color-text-muted-dark);
+  --color-text-disabled: var(--color-text-disabled-dark);
+  --color-text-inverse: var(--color-text-inverse-dark);
+
+  --color-gemini-glow-a: rgba(66, 133, 244, 0.25);
+  --color-gemini-glow-b: rgba(138, 180, 248, 0.18);
+  --color-shadow-soft: rgba(2, 6, 23, 0.46);
+
+  --color-success-bg: rgba(34, 197, 94, 0.16);
+  --color-success-text: #86efac;
+  --color-warning-bg: rgba(245, 158, 11, 0.18);
+  --color-warning-text: #fcd34d;
+  --color-error-bg: rgba(239, 68, 68, 0.18);
+  --color-error-text: #fca5a5;
+  --color-info-bg: rgba(59, 130, 246, 0.18);
+  --color-info-text: #93c5fd;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  html:not([data-theme]) {
+    color-scheme: dark;
     --color-bg-base: var(--color-bg-base-dark);
     --color-bg-alt: var(--color-bg-alt-dark);
     --color-bg-muted: var(--color-bg-muted-dark);
@@ -178,12 +243,21 @@
     --color-text-secondary: var(--color-text-secondary-dark);
     --color-text-muted: var(--color-text-muted-dark);
     --color-text-disabled: var(--color-text-disabled-dark);
+    --color-text-inverse: var(--color-text-inverse-dark);
+
+    --color-gemini-glow-a: rgba(66, 133, 244, 0.25);
+    --color-gemini-glow-b: rgba(138, 180, 248, 0.18);
+    --color-shadow-soft: rgba(2, 6, 23, 0.46);
   }
 }
 
-/* ==================== 基础样式 ==================== */
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
 }
 
 html {
@@ -193,15 +267,21 @@ html {
 }
 
 body {
+  margin: 0;
   font-family: var(--font-family-base);
   background-color: var(--color-bg-base);
   color: var(--color-text-primary);
-  min-height: 100vh;
   transition: background-color var(--duration-slow) var(--ease-out),
-              color var(--duration-slow) var(--ease-out);
+    color var(--duration-slow) var(--ease-out);
 }
 
-/* ==================== 滚动条 ==================== */
+.gemini-app {
+  background:
+    radial-gradient(1200px circle at 12% -20%, var(--color-gemini-glow-a), transparent 55%),
+    radial-gradient(900px circle at 88% -15%, var(--color-gemini-glow-b), transparent 52%),
+    linear-gradient(180deg, var(--color-bg-base) 0%, var(--color-bg-alt) 100%);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -212,22 +292,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-text-muted);
+  background: color-mix(in oklab, var(--color-text-muted) 65%, transparent);
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease-out);
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary);
 }
 
-/* Firefox 滚动条 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-text-muted) transparent;
+  scrollbar-color: color-mix(in oklab, var(--color-text-muted) 65%, transparent) transparent;
 }
 
-/* ==================== Focus 可见性 ==================== */
 *:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -238,13 +315,11 @@ body {
   outline: none;
 }
 
-/* ==================== 选中文本 ==================== */
 ::selection {
   background-color: var(--color-primary-light);
   color: var(--color-text-primary);
 }
 
-/* ==================== 减少动画 ==================== */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -255,20 +330,18 @@ body {
   }
 }
 
-/* ==================== 工具类 ==================== */
 .glow-primary {
-  box-shadow: 0 0 20px rgba(94, 106, 210, 0.3);
+  box-shadow: 0 0 20px rgba(66, 133, 244, 0.3);
 }
 
 .glow-accent {
-  box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 20px rgba(52, 168, 83, 0.3);
 }
 
 .glow-danger {
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 20px rgba(234, 67, 53, 0.3);
 }
 
-/* ==================== 动画关键帧 ==================== */
 @keyframes fadeIn {
   from {
     opacity: 0;

@@ -20,6 +20,39 @@ export interface UseSkillCommandReturn {
   onClose: () => void;
 }
 
+async function loadSkillsFromUrl(
+  fetchFn: typeof fetch,
+  url: string,
+): Promise<Skill[] | null> {
+  const res = await fetchFn(url);
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as { skills?: Skill[] };
+  if (!Array.isArray(data.skills)) return [];
+  return data.skills;
+}
+
+export async function loadSkillsWithFallback(
+  fetchFn: typeof fetch,
+  preferredUrl: string,
+): Promise<Skill[]> {
+  const proxyCandidates = ['/api/skills', '/api/skills/'];
+  const candidates = proxyCandidates.includes(preferredUrl)
+    ? [preferredUrl]
+    : [preferredUrl, ...proxyCandidates];
+
+  for (const url of candidates) {
+    try {
+      const skills = await loadSkillsFromUrl(fetchFn, url);
+      if (skills !== null) return skills;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return [];
+}
+
 export function useSkillCommand(): UseSkillCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [filtered, setFiltered] = useState<Skill[]>([]);
@@ -29,10 +62,8 @@ export function useSkillCommand(): UseSkillCommandReturn {
   const fetchSkills = useCallback(async (): Promise<Skill[]> => {
     if (skillsCache.current !== null) return skillsCache.current;
     try {
-      const res = await fetch(getSkillsUrl());
-      if (!res.ok) return [];
-      const data = await res.json() as { skills: Skill[] };
-      skillsCache.current = data.skills ?? [];
+      const skills = await loadSkillsWithFallback(fetch, getSkillsUrl());
+      skillsCache.current = skills;
       return skillsCache.current;
     } catch {
       return [];

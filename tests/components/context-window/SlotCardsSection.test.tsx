@@ -5,8 +5,8 @@ import type { SlotDetail, StateMessage } from '@/types/context-window';
 
 const mockSlots: SlotDetail[] = [
   { name: 'system', display_name: '① 系统提示词', content: 'You are an AI...', tokens: 2048, enabled: true },
-  { name: 'history', display_name: '⑧ 会话历史', content: '', tokens: 3200, enabled: true },
-  { name: 'rag', display_name: '④ RAG 背景知识', content: 'doc content', tokens: 0, enabled: false },
+  { name: 'history', display_name: '⑨ 会话历史', content: '', tokens: 3200, enabled: true },
+  { name: 'rag', display_name: '⑤ RAG 背景知识', content: 'doc content', tokens: 0, enabled: false },
 ];
 
 const mockStateMessages: StateMessage[] = [
@@ -15,11 +15,12 @@ const mockStateMessages: StateMessage[] = [
 ];
 
 describe('SlotCardsSection', () => {
-  it('应渲染模块三青绿色色条', () => {
+  it('应渲染 slot 卡片列表', () => {
     render(
       <SlotCardsSection slotDetails={mockSlots} stateMessages={mockStateMessages} />
     );
-    expect(screen.getByTestId('module3-accent')).toBeInTheDocument();
+    expect(screen.getByTestId('slot-card-history')).toBeInTheDocument();
+    expect(screen.getByTestId('slot-card-system')).toBeInTheDocument();
   });
 
   it('应按 token 降序排列：history(3200) 在 system(2048) 前', () => {
@@ -50,7 +51,7 @@ describe('SlotCardsSection', () => {
     expect(screen.queryByText(/You are an AI/)).not.toBeInTheDocument();
   });
 
-  it('⑧ 会话历史展开后应显示 stateMessages 内容', () => {
+  it('⑨ 会话历史展开后应显示 stateMessages 内容', () => {
     render(<SlotCardsSection slotDetails={mockSlots} stateMessages={mockStateMessages} />);
     fireEvent.click(screen.getByTestId('slot-card-history'));
     expect(screen.getByText(/hello/)).toBeInTheDocument();

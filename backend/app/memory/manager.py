@@ -13,9 +13,9 @@ from app.memory.schemas import EpisodicData, MemoryContext, UserProfile
 class MemoryManager:
     """Memory manager for long-term memory (user profiles).
 
-    P0 Implementation:
+    Current Implementation:
     - load_episodic: Loads user profile from store (returns empty if not found)
-    - save_episodic: No-op (P0 stub — P2 will implement with dirty flag)
+    - save_episodic: Persists profile to store
     - build_injection_parts: Iterates processors for ephemeral injection
     - build_ephemeral_prompt: Deprecated wrapper (delegates to EpisodicProcessor)
     - load_procedural / save_procedural: Load/save workflow SOPs
@@ -62,14 +62,20 @@ class MemoryManager:
     async def save_episodic(self, user_id: str, data: UserProfile) -> None:
         """Save user profile to store.
 
-        P0: No-op (stub implementation).
-
         Args:
             user_id: User identifier
             data: UserProfile to save
         """
-        # P0: Don't write to store yet
-        pass
+        if not user_id:
+            return
+        payload = data.model_dump()
+        if not payload.get("user_id"):
+            payload["user_id"] = user_id
+        await self.store.aput(
+            namespace=("profile", user_id),
+            key="episodic",
+            value=payload,
+        )
 
     def build_ephemeral_prompt(self, ctx: MemoryContext) -> str:
         """Build episodic injection text (deprecated — use build_injection_parts).

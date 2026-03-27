@@ -16,7 +16,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain.agents import create_agent
@@ -307,17 +307,12 @@ class TestExecutionLayerABMix:
         assert str(tool_messages[-1].content).startswith("merge_summary:")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Known gap: /chat/resume send_email path has no idempotency guard wired.",
-    )
     async def test_hil_resume_should_not_repeat_send_email_side_effect_for_same_payload(self) -> None:
         """
-        RED test: same effective send_email payload should be deduplicated across resumes.
-
-        Current implementation executes send_email twice, exposing missing idempotency wiring.
+        Same effective send_email payload should be deduplicated across resumes.
         """
         from app.api.chat import ChatResumeRequest, chat_resume
+        from langgraph.types import Command
 
         capture = EventCapture()
 
@@ -337,6 +332,19 @@ class TestExecutionLayerABMix:
                 return None
 
         fake_store = FakeInterruptStore()
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
 
         with (
             patch(
@@ -344,9 +352,9 @@ class TestExecutionLayerABMix:
                 new=AsyncMock(return_value=fake_store),
             ),
             patch(
-                "app.tools.send_email.send_email.invoke",
-                new=MagicMock(return_value='{"success": true}'),
-            ) as mock_send_invoke,
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
         ):
             response_1 = await chat_resume(
                 ChatResumeRequest(
@@ -366,5 +374,7 @@ class TestExecutionLayerABMix:
             )
             await _consume_streaming_response(response_2, capture)
 
-            # Expected behavior (future): same semantic operation should run once.
-            assert mock_send_invoke.call_count == 1
+            assert len(call_inputs) == 1
+            assert isinstance(call_inputs[0], Command)
+            payload = call_inputs[0].resume["interrupt-1"]
+            assert payload["decisions"][0]["type"] == "approve"
