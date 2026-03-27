@@ -73,3 +73,4 @@ tmp/
 
 # Git Worktrees
 .worktrees/
+.claude/worktrees/
