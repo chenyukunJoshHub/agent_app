@@ -6,12 +6,11 @@ P0: Implements after_model hook to push thought events via SSE.
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 
 from app.agent.context import AgentContext
-from app.observability.trace_block import TraceBlockBuilder, emit_trace_block
-from app.observability.trace_events import build_trace_event, emit_trace_event
+from app.observability.trace_events import emit_trace_event
 
 
 class TraceMiddleware(AgentMiddleware):
@@ -22,11 +21,7 @@ class TraceMiddleware(AgentMiddleware):
     """
 
     def __init__(self) -> None:
-        """Initialize TraceMiddleware.
-
-        SSE queue is injected per-request via runtime.context (AgentContext).
-        """
-        self._block_builder = TraceBlockBuilder()
+        """Initialize TraceMiddleware."""
         logger.info("✅ [TraceMiddleware] 初始化完成，负责 SSE 流式推送和 Token 追踪")
 
     @staticmethod
@@ -40,6 +35,35 @@ class TraceMiddleware(AgentMiddleware):
             ctx = getattr(rt, "context", None)
         return ctx.sse_queue if ctx else None
 
+    @staticmethod
+    def _iter_current_turn_tool_messages(messages: list[Any]) -> list[ToolMessage]:
+        """Return ToolMessage objects for the latest turn only.
+
+        State messages can contain the full session history. For trace fidelity, tool
+        result events should map to the current turn (messages after the last user input).
+        """
+        last_human_index: int | None = None
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                last_human_index = i
+                break
+
+        start_index = last_human_index if last_human_index is not None else 0
+        current_turn = messages[start_index:]
+
+        seen_tool_call_ids: set[str] = set()
+        tool_messages: list[ToolMessage] = []
+        for msg in current_turn:
+            if not isinstance(msg, ToolMessage):
+                continue
+            tool_call_id = str(getattr(msg, "tool_call_id", "") or "")
+            if tool_call_id and tool_call_id in seen_tool_call_ids:
+                continue
+            if tool_call_id:
+                seen_tool_call_ids.add(tool_call_id)
+            tool_messages.append(msg)
+        return tool_messages
+
     async def _send_sse_event(self, sse_queue: Any, event_type: str, data: dict[str, Any]) -> None:
         """Send an event to the SSE queue."""
         if sse_queue is not None:
@@ -51,21 +75,6 @@ class TraceMiddleware(AgentMiddleware):
         else:
             logger.debug(f"No SSE queue, skipping event: {event_type}")
 
-    async def _feed_block_builder(
-        self,
-        sse_queue: Any,
-        *,
-        stage: str,
-        step: str,
-        status: str = "ok",
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        """Feed a trace event to the block builder and emit any resulting blocks."""
-        event_dict = build_trace_event(stage=stage, step=step, status=status, payload=payload)
-        blocks = self._block_builder.on_trace_event(event_dict)
-        for block in blocks:
-            await emit_trace_block(sse_queue, block)
-
     async def abefore_agent(
         self, state: Any, runtime: Any
     ) -> dict[str, Any] | None:
@@ -75,12 +84,6 @@ class TraceMiddleware(AgentMiddleware):
         logger.info(f"▶️ [Middleware] abefore_agent — 开始新一轮 Agent 推理，当前消息历史={msg_count} 条")
         await self._send_sse_event(sse_queue, "agent_start", {"session_id": state.get("session_id")})
         await emit_trace_event(
-            sse_queue,
-            stage="react",
-            step="turn_start",
-            payload={"messages": msg_count},
-        )
-        await self._feed_block_builder(
             sse_queue,
             stage="react",
             step="turn_start",
@@ -103,10 +106,6 @@ class TraceMiddleware(AgentMiddleware):
                         sse_queue, stage="react", step="model_call_start", status="start",
                         payload={"messages": msg_count},
                     )
-                    await self._feed_block_builder(
-                        sse_queue, stage="react", step="model_call_start", status="start",
-                        payload={"messages": msg_count},
-                    )
 
                 asyncio.create_task(_emit_and_feed())
             except RuntimeError:
@@ -119,10 +118,6 @@ class TraceMiddleware(AgentMiddleware):
         msg_count = len(getattr(request, "messages", []) or [])
         logger.info(f"📨 [Middleware] awrap_model_call — 即将调用 LLM，输入消息数={msg_count} 条")
         await emit_trace_event(
-            sse_queue, stage="react", step="model_call_start", status="start",
-            payload={"messages": msg_count},
-        )
-        await self._feed_block_builder(
             sse_queue, stage="react", step="model_call_start", status="start",
             payload={"messages": msg_count},
         )
@@ -148,18 +143,6 @@ class TraceMiddleware(AgentMiddleware):
         """
         sse_queue = self._get_sse_queue(runtime)
         logger.info(f"🧠 [Middleware] aafter_model — LLM 响应完成，分析输出内容...")
-        await emit_trace_event(
-            sse_queue,
-            stage="react",
-            step="model_call_end",
-            payload={"messages": len(state.get("messages", []))},
-        )
-        await self._feed_block_builder(
-            sse_queue,
-            stage="react",
-            step="model_call_end",
-            payload={"messages": len(state.get("messages", []))},
-        )
 
         # Extract latest AI message for thought content
         messages = state.get("messages", [])
@@ -169,6 +152,18 @@ class TraceMiddleware(AgentMiddleware):
             if isinstance(latest_message, AIMessage):
                 has_tool_calls = bool(getattr(latest_message, "tool_calls", None))
                 content_len = len(str(latest_message.content or ""))
+                tool_count = len(latest_message.tool_calls) if has_tool_calls else 0
+                content_preview = str(latest_message.content or "")[:200]
+                await emit_trace_event(
+                    sse_queue,
+                    stage="react",
+                    step="model_call_end",
+                    payload={
+                        "messages": len(state.get("messages", [])),
+                        "tool_count": tool_count,
+                        "content_preview": content_preview,
+                    },
+                )
                 if has_tool_calls:
                     tool_names = [tc.get("name", "?") for tc in latest_message.tool_calls]
                     logger.info(f"🔀 [Middleware] LLM 决定调用工具: {tool_names}（内容长度={content_len}）")
@@ -191,30 +186,17 @@ class TraceMiddleware(AgentMiddleware):
                         sse_queue,
                         stage="react",
                         step="thought_emitted",
-                        payload={"chars": len(str(latest_message.content))},
-                    )
-                    await self._feed_block_builder(
-                        sse_queue,
-                        stage="react",
-                        step="thought_emitted",
-                        payload={"chars": len(str(latest_message.content))},
+                        payload={
+                            "chars": len(str(latest_message.content)),
+                            "content_preview": content_preview,
+                            "tool_count": tool_count,
+                        },
                     )
 
                 # Emit stage="tools" events for planned tool calls
                 if hasattr(latest_message, "tool_calls") and latest_message.tool_calls:
                     for tc in latest_message.tool_calls:
                         await emit_trace_event(
-                            sse_queue,
-                            stage="tools",
-                            step="tool_call_planned",
-                            status="start",
-                            payload={
-                                "tool_name": tc.get("name", ""),
-                                "tool_call_id": tc.get("id", ""),
-                                "args": tc.get("args", {}),
-                            },
-                        )
-                        await self._feed_block_builder(
                             sse_queue,
                             stage="tools",
                             step="tool_call_planned",
@@ -269,16 +251,20 @@ class TraceMiddleware(AgentMiddleware):
                             "remaining": remaining,
                         },
                     )
-                    await self._feed_block_builder(
-                        sse_queue,
-                        stage="context",
-                        step="token_update",
-                        payload={
-                            "current": current_usage,
-                            "budget": budget,
-                            "remaining": remaining,
-                        },
-                    )
+            else:
+                await emit_trace_event(
+                    sse_queue,
+                    stage="react",
+                    step="model_call_end",
+                    payload={"messages": len(state.get("messages", []))},
+                )
+        else:
+            await emit_trace_event(
+                sse_queue,
+                stage="react",
+                step="model_call_end",
+                payload={"messages": 0},
+            )
 
         return None
 
@@ -290,33 +276,21 @@ class TraceMiddleware(AgentMiddleware):
         msg_count = len(state.get("messages", []))
         logger.info(f"⏹️ [Middleware] aafter_agent — Agent 轮次结束，最终消息历史={msg_count} 条")
 
-        # Extract tool results and emit stage="tools" result events
+        # Extract tool results for current turn only and emit stage="tools" result events
         messages = state.get("messages", [])
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                content_str = str(msg.content)
-                await emit_trace_event(
-                    sse_queue,
-                    stage="tools",
-                    step="tool_call_result",
-                    status="ok",
-                    payload={
-                        "tool_call_id": getattr(msg, "tool_call_id", ""),
-                        "content_preview": content_str[:200],
-                        "content_length": len(content_str),
-                    },
-                )
-                await self._feed_block_builder(
-                    sse_queue,
-                    stage="tools",
-                    step="tool_call_result",
-                    status="ok",
-                    payload={
-                        "tool_call_id": getattr(msg, "tool_call_id", ""),
-                        "content_preview": content_str[:200],
-                        "content_length": len(content_str),
-                    },
-                )
+        for msg in self._iter_current_turn_tool_messages(messages):
+            content_str = str(msg.content)
+            await emit_trace_event(
+                sse_queue,
+                stage="tools",
+                step="tool_call_result",
+                status="ok",
+                payload={
+                    "tool_call_id": getattr(msg, "tool_call_id", ""),
+                    "content_preview": content_str[:200],
+                    "content_length": len(content_str),
+                },
+            )
 
         # Extract final answer
         messages = state.get("messages", [])
@@ -353,14 +327,25 @@ class TraceMiddleware(AgentMiddleware):
                 # 仅保留前端 StateMessage 支持的 role（user/assistant/tool），过滤掉 system
                 serialized_messages = [m for m in _all_messages if m["role"] in ("user", "assistant", "tool")]
 
+                # Emit answer block before turn_summary
+                answer_text = str(last_message.content or "")
+                answer_preview = answer_text[:200]
+                await emit_trace_event(
+                    sse_queue,
+                    stage="react",
+                    step="answer_emitted",
+                    payload={"chars": len(answer_text), "content_preview": answer_preview},
+                )
+                finish_reason = getattr(last_message, "response_metadata", {}).get(
+                    "finish_reason", "stop"
+                )
+
                 await self._send_sse_event(
                     sse_queue,
                     "done",
                     {
                         "answer": last_message.content,
-                        "finish_reason": getattr(last_message, "response_metadata", {}).get(
-                            "finish_reason", "unknown"
-                        ),
+                        "finish_reason": finish_reason,
                         "messages": serialized_messages,
                     },
                 )
@@ -368,13 +353,10 @@ class TraceMiddleware(AgentMiddleware):
                     sse_queue,
                     stage="react",
                     step="turn_done",
-                    payload={"answer_chars": len(str(last_message.content))},
-                )
-                await self._feed_block_builder(
-                    sse_queue,
-                    stage="react",
-                    step="turn_done",
-                    payload={"answer_chars": len(str(last_message.content))},
+                    payload={
+                        "answer_chars": len(str(last_message.content)),
+                        "finish_reason": finish_reason,
+                    },
                 )
 
         return None

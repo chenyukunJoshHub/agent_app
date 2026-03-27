@@ -185,12 +185,52 @@ class TestTraceMiddleware:
 
         await trace_middleware.aafter_agent(state, runtime)
 
-        # Check done event was sent
-        assert not mock_queue.empty()
-        event_type, data = await mock_queue.get()
-        assert event_type == "done"
-        assert "answer" in data
-        assert data["answer"] == "Final answer"
+        # Check done event was sent (trace_block/trace_event may appear before done)
+        events_sent = []
+        while not mock_queue.empty():
+            events_sent.append(await mock_queue.get())
+
+        done_events = [payload for event_type, payload in events_sent if event_type == "done"]
+        assert len(done_events) == 1
+        assert "answer" in done_events[0]
+        assert done_events[0]["answer"] == "Final answer"
+
+    @pytest.mark.asyncio
+    async def test_aafter_agent_emits_tool_results_for_current_turn_only(
+        self,
+        trace_middleware: TraceMiddleware,
+        mock_queue,
+    ) -> None:
+        """Historical ToolMessage entries should not be replayed as current-turn tool results."""
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        state = {
+            "messages": [
+                HumanMessage(content="上一轮问题"),
+                ToolMessage(content="old-result", tool_call_id="call_old"),
+                HumanMessage(content="这一轮问题"),
+                ToolMessage(content="new-result", tool_call_id="call_new"),
+                AIMessage(content="最终回答", response_metadata={"finish_reason": "stop"}),
+            ]
+        }
+        runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
+
+        while not mock_queue.empty():
+            mock_queue.get_nowait()
+
+        await trace_middleware.aafter_agent(state, runtime)
+
+        tool_result_ids: list[str] = []
+        while not mock_queue.empty():
+            event_type, payload = await mock_queue.get()
+            if event_type != "trace_event":
+                continue
+            if payload.get("stage") == "tools" and payload.get("step") == "tool_call_result":
+                tool_result_ids.append(str(payload.get("payload", {}).get("tool_call_id", "")))
+
+        assert tool_result_ids == ["call_new"]
 
     @pytest.mark.asyncio
     async def test_send_sse_event_with_queue(self, mock_queue) -> None:
@@ -377,70 +417,39 @@ class TestTraceMiddleware:
 
 
 class TestTraceBlockBuilderIntegration:
-    """Test TraceBlockBuilder integration wiring in TraceMiddleware."""
+    """Test trace_block emission integration via emit_trace_event."""
 
     @pytest.fixture
     def trace_middleware(self) -> TraceMiddleware:
         """Create TraceMiddleware with block builder."""
         return TraceMiddleware()
 
-    def test_has_block_builder_attribute(self, trace_middleware: TraceMiddleware) -> None:
-        """TraceMiddleware should have a _block_builder attribute."""
-        assert hasattr(trace_middleware, "_block_builder")
-        from app.observability.trace_block import TraceBlockBuilder
-        assert isinstance(trace_middleware._block_builder, TraceBlockBuilder)
-
     @pytest.mark.asyncio
-    async def test_feed_block_builder_emits_blocks(self, trace_middleware: TraceMiddleware) -> None:
-        """_feed_block_builder should call builder and emit resulting blocks."""
+    async def test_abefore_agent_emits_trace_block(self, trace_middleware: TraceMiddleware) -> None:
+        """abefore_agent should emit both trace_event and trace_block for turn_start."""
         import asyncio
 
         queue = asyncio.Queue()
-        # Mock the builder to return a known block
-        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[{"type": "test_block"}])
+        state = {"session_id": "test_session", "messages": []}
+        runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = queue
 
-        await trace_middleware._feed_block_builder(
-            queue,
-            stage="react",
-            step="turn_done",
-        )
+        await trace_middleware.abefore_agent(state, runtime)
 
-        # Should have emitted the block via SSE
-        assert not queue.empty()
-        event_type, data = await queue.get()
-        assert event_type == "trace_block"
-        assert data["type"] == "test_block"
+        events_sent = []
+        while not queue.empty():
+            events_sent.append(await queue.get())
 
-    @pytest.mark.asyncio
-    async def test_feed_block_builder_with_none_queue(self, trace_middleware: TraceMiddleware) -> None:
-        """_feed_block_builder should handle None queue gracefully."""
-        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[{"type": "test_block"}])
-
-        # Should not raise
-        await trace_middleware._feed_block_builder(
-            None,
-            stage="react",
-            step="turn_start",
-        )
-
-    @pytest.mark.asyncio
-    async def test_feed_block_builder_no_blocks(self, trace_middleware: TraceMiddleware) -> None:
-        """_feed_block_builder should be a no-op when builder returns no blocks."""
-        import asyncio
-
-        queue = asyncio.Queue()
-        trace_middleware._block_builder.on_trace_event = MagicMock(return_value=[])
-
-        await trace_middleware._feed_block_builder(
-            queue,
-            stage="react",
-            step="model_call_start",
-            status="start",
-            payload={"messages": 5},
-        )
-
-        # Queue should be empty (no blocks emitted)
-        assert queue.empty()
+        event_types = [event_type for event_type, _ in events_sent]
+        assert "trace_event" in event_types
+        assert "trace_block" in event_types
+        turn_start_blocks = [
+            payload
+            for event_type, payload in events_sent
+            if event_type == "trace_block" and payload.get("type") == "turn_start"
+        ]
+        assert len(turn_start_blocks) == 1
 
 
 class TestMiddlewareIntegration:

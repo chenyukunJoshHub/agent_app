@@ -3,7 +3,7 @@ Unit tests for app.config.Settings.
 
 These tests verify configuration loading and validation.
 """
-import os
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -39,6 +39,11 @@ class TestSettings:
         assert s.environment == "development"
         assert s.log_level == "INFO"
         assert s.debug is False
+        assert s.memory_profile_update_mode == "rule"
+        assert s.memory_profile_llm_interval == 10
+        assert s.memory_profile_opinion_min_confidence == 0.9
+        assert s.task_planner_mode == "rule"
+        assert s.task_planner_max_steps == 8
 
     def test_ollama_provider(self) -> None:
         """Test Ollama provider configuration."""
@@ -70,7 +75,7 @@ class TestSettings:
 
     def test_openai_provider(self) -> None:
         """Test OpenAI provider configuration."""
-        s = Settings(
+        s = _TestSettings(
             llm_provider=LLMProvider.OPENAI,
             openai_api_key="test_key",
         )
@@ -110,6 +115,15 @@ class TestSettings:
             "http://example.com",
         ]
 
+    def test_default_allowed_origins_include_e2e_ports(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default CORS origins should include both dev and playwright frontend ports."""
+        monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+        s = _TestSettings()
+        assert "http://localhost:3000" in s.allowed_origins
+        assert "http://127.0.0.1:3000" in s.allowed_origins
+        assert "http://localhost:3010" in s.allowed_origins
+        assert "http://127.0.0.1:3010" in s.allowed_origins
+
     def test_database_url_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default database URL (isolated from environment)."""
         monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -133,6 +147,27 @@ class TestSettings:
         # Invalid environment
         with pytest.raises(ValidationError):
             Settings(environment="invalid")  # type: ignore
+
+    def test_memory_profile_llm_interval_validation(self) -> None:
+        """llm interval must be >= 1."""
+        Settings(memory_profile_llm_interval=1)
+        with pytest.raises(ValidationError):
+            Settings(memory_profile_llm_interval=0)
+
+    def test_memory_profile_opinion_min_confidence_validation(self) -> None:
+        """opinion confidence must be in [0, 1]."""
+        Settings(memory_profile_opinion_min_confidence=0.0)
+        Settings(memory_profile_opinion_min_confidence=1.0)
+        with pytest.raises(ValidationError):
+            Settings(memory_profile_opinion_min_confidence=-0.01)
+        with pytest.raises(ValidationError):
+            Settings(memory_profile_opinion_min_confidence=1.01)
+
+    def test_task_planner_max_steps_validation(self) -> None:
+        """task_planner_max_steps must be >= 1."""
+        Settings(task_planner_max_steps=1)
+        with pytest.raises(ValidationError):
+            Settings(task_planner_max_steps=0)
 
 
 class TestSettingsSingleton:
@@ -174,7 +209,7 @@ class TestSettingsSingleton:
 class TestEnvironmentVariableLoading:
     """Test loading settings from environment variables."""
 
-    @pytest.mark.skipif(not os.path.exists(".env"), reason="No .env file found")
+    @pytest.mark.skipif(not Path(".env").exists(), reason="No .env file found")
     def test_load_from_env_file(self) -> None:
         """Test loading settings from .env file."""
         # Settings should load from .env automatically
@@ -198,3 +233,18 @@ class TestEnvironmentVariableLoading:
 
         s = Settings()
         assert s.database_url == custom_url
+
+    def test_memory_profile_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test memory profile settings loaded from env."""
+        monkeypatch.setenv("MEMORY_PROFILE_UPDATE_MODE", "llm")
+        monkeypatch.setenv("MEMORY_PROFILE_LLM_INTERVAL", "7")
+        monkeypatch.setenv("MEMORY_PROFILE_OPINION_MIN_CONFIDENCE", "0.95")
+        monkeypatch.setenv("TASK_PLANNER_MODE", "hybrid")
+        monkeypatch.setenv("TASK_PLANNER_MAX_STEPS", "6")
+
+        s = Settings()
+        assert s.memory_profile_update_mode == "llm"
+        assert s.memory_profile_llm_interval == 7
+        assert s.memory_profile_opinion_min_confidence == 0.95
+        assert s.task_planner_mode == "hybrid"
+        assert s.task_planner_max_steps == 6

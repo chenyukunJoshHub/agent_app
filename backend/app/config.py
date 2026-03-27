@@ -206,7 +206,12 @@ class Settings(BaseSettings):
 
     # CORS
     allowed_origins: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
+        default=(
+            "http://localhost:3000,"
+            "http://127.0.0.1:3000,"
+            "http://localhost:3010,"
+            "http://127.0.0.1:3010"
+        ),
         description="Comma-separated list of allowed CORS origins",
     )
 
@@ -260,6 +265,34 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         description="Reserved buffer ratio before auto-compaction",
+    )
+
+    # Memory Profile Update Strategy (Phase 21)
+    memory_profile_update_mode: Literal["rule", "llm"] = Field(
+        default="rule",
+        description="User profile update strategy in after_agent: rule | llm",
+    )
+    memory_profile_llm_interval: int = Field(
+        default=10,
+        ge=1,
+        description="Run LLM profile extraction every N interactions in llm mode",
+    )
+    memory_profile_opinion_min_confidence: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence required to merge opinion entries into preferences",
+    )
+
+    # Task Planner Strategy (Phase 23)
+    task_planner_mode: Literal["rule", "llm", "hybrid"] = Field(
+        default="rule",
+        description="Task planner strategy: rule | llm | hybrid(LLM first, fallback rule)",
+    )
+    task_planner_max_steps: int = Field(
+        default=8,
+        ge=1,
+        description="Maximum number of steps accepted from planner output",
     )
 
     @field_validator("allowed_origins")
