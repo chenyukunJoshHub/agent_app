@@ -67,6 +67,7 @@ logs/
 
 # Misc
 .history/
+checklist.md
 temp/
 tmp/
 
