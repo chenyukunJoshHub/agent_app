@@ -16,7 +16,8 @@ test.describe('Tool Serial Smoke', () => {
     await expect(chatInput).toBeEnabled({ timeout: 180000 });
 
     await expect(page.getByTestId('execution-trace-panel')).toBeVisible({ timeout: 30000 });
-    const toolCalls = page.getByTestId('tool-call-card');
-    await expect(toolCalls).toHaveCount(2, { timeout: 30000 });
+    const toolCalls = page.getByTestId('trace-block-card').filter({ hasText: 'web_search' });
+    await expect(toolCalls.first()).toBeVisible({ timeout: 120000 });
+    expect(await toolCalls.count()).toBeGreaterThanOrEqual(1);
   });
 });

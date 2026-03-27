@@ -17,10 +17,18 @@ test.describe('Context Panel', () => {
     await page.getByRole('button', { name: /context/i }).click();
   });
 
-  test('应显示模块①②③的标题', async ({ page }) => {
-    await expect(page.getByText(/① 会话元数据/)).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText(/② 上下文窗口.*Token 地图/)).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText(/③ 各 Slot 原文/)).toBeVisible({ timeout: 5000 });
+  test('应显示 Context 面板关键区块', async ({ page }) => {
+    await expect(page.getByTestId('context-window-panel')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('会话名称')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/context window Token 占比/i)).toBeVisible({ timeout: 5000 });
+
+    const slotCards = page.locator('[data-testid^="slot-card-"]');
+    const hasSlotCards = (await slotCards.count()) > 0;
+    if (hasSlotCards) {
+      await expect(slotCards.first()).toBeVisible({ timeout: 5000 });
+    } else {
+      await expect(page.getByText('暂无 Slot 数据')).toBeVisible({ timeout: 5000 });
+    }
   });
 
   test('应显示模块②的 Token 比例条', async ({ page }) => {
@@ -39,7 +47,7 @@ test.describe('Context Panel', () => {
     await page.getByRole('button', { name: /发送/i }).click();
 
     // 等待响应完成（本地 Ollama 最多 3 分钟）
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180_000 });
+    await expect(page.getByPlaceholder(/描述任务/i)).toBeEnabled({ timeout: 180_000 });
 
     // Token 地图应有比例条
     const tokenBar = page.getByTestId('token-bar');
@@ -56,7 +64,7 @@ test.describe('Context Panel', () => {
   test('Slot 卡片点击后应展开内容', async ({ page }) => {
     await page.getByPlaceholder(/描述任务/i).fill('你好');
     await page.getByRole('button', { name: /发送/i }).click();
-    await page.getByPlaceholder(/描述任务/i).toBeEnabled({ timeout: 180_000 });
+    await expect(page.getByPlaceholder(/描述任务/i)).toBeEnabled({ timeout: 180_000 });
 
     const systemCard = page.getByTestId('slot-card-system');
     const hasCard = await systemCard.isVisible({ timeout: 3000 }).catch(() => false);

@@ -33,7 +33,8 @@ test.describe('SSE Streaming', () => {
     await page.getByRole('button', { name: /context/i }).click();
     const contextPanel = page.getByTestId('context-window-panel');
     await expect(contextPanel).toBeVisible({ timeout: 10000 });
-    await expect(contextPanel.getByTestId('overall-progress-fill')).toBeVisible();
+    await expect(contextPanel.getByText('会话名称')).toBeVisible();
+    await expect(contextPanel.getByTestId('token-bar')).toBeVisible();
   });
 
   test('流式完成后输入框应恢复可编辑', async ({ page }) => {
@@ -56,11 +57,9 @@ test.describe('SSE Streaming', () => {
     const input = page.getByPlaceholder(/描述任务/i);
     await expect(input).toBeEnabled({ timeout: 180000 });
 
-    // 使用辅助函数检查消息内容
+    // 使用辅助函数检查助手消息内容
     const hasContent = await waitForMessageContent(page, { timeout: 30000 });
 
-    // 允许纯思考内容（不一定有实际回复）
-    // 只要消息元素存在且有内容即可
     expect(hasContent).toBe(true);
   });
 });

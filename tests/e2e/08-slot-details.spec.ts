@@ -14,24 +14,30 @@ test.describe('Slot Details E2E', () => {
 
   test('displays context usage panel', async ({ page }) => {
     await expect(page.getByTestId('context-window-panel')).toBeVisible();
-    await expect(page.getByText('Context Usage')).toBeVisible();
+    await expect(page.getByText('会话名称')).toBeVisible();
+    await expect(page.getByText('context window Token 占比')).toBeVisible();
   });
 
   test('shows category usage rows', async ({ page }) => {
-    await expect(page.getByTestId('context-row-free-space')).toBeVisible();
-    await expect(page.getByTestId('context-row-autocompact-buffer')).toBeVisible();
+    await expect(page.getByTestId('token-bar')).toBeVisible();
+    await expect(page.getByTestId('usage-rate')).toBeVisible();
   });
 
   test('shows complete slot snapshot section', async ({ page }) => {
-    await expect(page.getByText('完整 Slot 快照')).toBeVisible();
-    await expect(page.getByTestId('slot-breakdown')).toBeVisible();
+    // 当前实现是 Slot 卡片区（有数据时显示卡片，空数据时显示占位文案）
+    const slotSystemCard = page.getByTestId('slot-card-system');
+    if ((await slotSystemCard.count()) > 0) {
+      await expect(slotSystemCard.first()).toBeVisible();
+    } else {
+      await expect(page.getByText('暂无 Slot 数据')).toBeVisible();
+    }
   });
 
   test('shows overall progress and statistics', async ({ page }) => {
-    await expect(page.getByTestId('overall-progress-fill')).toBeVisible();
-    await expect(page.getByTestId('context-row-autocompact-buffer')).toBeVisible();
-    await expect(page.getByTestId('stat-reserved-buffer')).toBeVisible();
-    await expect(page.getByTestId('stat-free-space')).toBeVisible();
+    await expect(page.getByTestId('usage-rate')).toBeVisible();
+    await expect(page.getByTestId('user-messages-count')).toBeVisible();
+    await expect(page.getByTestId('assistant-messages-count')).toBeVisible();
+    await expect(page.getByTestId('token-bar')).toBeVisible();
   });
 });
 

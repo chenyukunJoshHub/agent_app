@@ -15,7 +15,7 @@ test.describe('Multi-Turn Conversation', () => {
 
   test('应该保持多轮对话历史', async ({ page }) => {
     const firstMessage = '我叫张三';
-    const secondMessage = '我的名字是什么？';
+    const secondMessage = '请重复我的名字，不要解释，只输出名字。';
 
     // 第一轮对话
     const chatInput = page.getByPlaceholder(/描述任务/i);
@@ -28,25 +28,33 @@ test.describe('Multi-Turn Conversation', () => {
     // 第二轮对话
     await chatInput.fill(secondMessage);
     await page.getByRole('button', { name: /发送/i }).click();
+    await expect(chatInput).toBeEnabled({ timeout: 180000 });
 
-    // 验证 Agent 记住了用户的名字（依赖 Ollama 本地模型回复，给足时间）
-    await expect(page.getByText(/张三/i)).toBeVisible({ timeout: 180000 });
+    // 验证历史仍在，且助手回复里出现“张三”（限定助手消息区域，避免 strict mode 冲突）
+    await expect(page.getByText(firstMessage, { exact: true })).toBeVisible();
+    const assistantReplyWithName = page.locator('.prose').filter({ hasText: /张三/i }).first();
+    await expect(assistantReplyWithName).toBeVisible({ timeout: 30000 });
   });
 
   test('聊天历史应该按时间顺序显示', async ({ page }) => {
-    const messages = ['第一条消息', '第二条消息', '第三条消息'];
+    // 控制轮数和回复长度，降低本地模型长时间生成导致的随机超时
+    const messages = [
+      '第一条消息，请只回复：收到1',
+      '第二条消息，请只回复：收到2',
+    ];
 
     const input = page.getByPlaceholder(/描述任务/i);
     for (const message of messages) {
       await expect(input).toBeEnabled({ timeout: 180000 });
       await input.fill(message);
       await page.getByRole('button', { name: /发送/i }).click();
-      await expect(page.getByText(message)).toBeVisible();
+      await expect(page.getByText(message, { exact: true })).toBeVisible();
     }
 
-    // 验证所有消息都显示在页面上
-    for (const message of messages) {
-      await expect(page.getByText(message)).toBeVisible();
-    }
+    // 验证用户消息顺序（MessageList 中用户气泡使用 p.whitespace-pre-wrap）
+    const userMessages = page.locator('p.whitespace-pre-wrap');
+    await expect(userMessages).toHaveCount(messages.length);
+    await expect(userMessages.nth(0)).toHaveText(messages[0]);
+    await expect(userMessages.nth(1)).toHaveText(messages[1]);
   });
 });

@@ -25,7 +25,7 @@ export function ContextPanel({
   const hasCompressionEvents = contextWindowData.compressionEvents.length > 0;
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full flex-col overflow-y-auto" data-testid="context-window-panel">
       {/* Module 1: 会话元数据与 Token 统计 */}
       <SessionMetadataSection
         sessionMeta={sessionMeta}

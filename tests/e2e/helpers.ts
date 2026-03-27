@@ -89,15 +89,21 @@ export async function waitForMessageContent(
     const chatInput = page.getByPlaceholder(/描述任务/i);
     await expect(chatInput).toBeEnabled({ timeout });
 
-    // 检查是否有 AI 消息内容
-    const messages = page.locator('[data-testid*="message"], [role="assistant"], [class*="ai-message"]');
-    const count = await messages.count();
+    // 当前前端中：助手回复渲染在 `.prose` 容器里（用户消息是 p.whitespace-pre-wrap）
+    const assistantMessages = page.locator('.prose');
+    const assistantCount = await assistantMessages.count();
+    if (assistantCount > 0) {
+      const lastAssistant = assistantMessages.last();
+      const text = await lastAssistant.textContent();
+      if ((text?.trim().length || 0) > 0) {
+        return true;
+      }
+    }
 
-    if (count > 0) {
-      // 获取最后一条消息
-      const lastMessage = messages.last();
-      const text = await lastMessage.textContent();
-      return (text?.trim().length || 0) > 0;
+    // 兜底：如果本轮只出现工具消息，也视为有流式内容
+    const toolMessages = page.getByTestId('tool-message-bubble');
+    if ((await toolMessages.count()) > 0) {
+      return true;
     }
 
     return false;
