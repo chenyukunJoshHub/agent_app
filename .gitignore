@@ -55,6 +55,7 @@ out/
 .cache/
 playwright-report/
 test-results/
+backend/tests/
 
 # Database
 *.db

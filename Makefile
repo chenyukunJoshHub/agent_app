@@ -61,7 +61,7 @@ install: install-backend install-frontend
 # Testing
 test-backend:
 	@echo "Running backend tests..."
-	cd backend && python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=html
+	cd backend && python -m pytest ../tests/backend -v --cov=app --cov-report=term-missing --cov-report=html
 
 # 前端组件测试（Vitest）
 test-frontend-components:
