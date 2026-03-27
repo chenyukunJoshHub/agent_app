@@ -91,7 +91,7 @@ class TestEpisodicProcessor:
 - [ ] **Step 2: 运行测试确认 RED**
 
 ```bash
-cd /Users/josh/Documents/work/learn_test/AI\ Developer\ Assistant/agent_app
+cd <PROJECT_ROOT>
 python -m pytest tests/backend/unit/memory/test_processors.py -v
 ```
 

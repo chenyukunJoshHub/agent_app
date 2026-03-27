@@ -103,7 +103,7 @@
 - [ ] **Step 1.3: TypeScript 编译检查**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx tsc --noEmit
 ```
 
@@ -112,7 +112,7 @@ npx tsc --noEmit
 - [ ] **Step 1.4: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/components/ExecutionTracePanel.tsx frontend/src/app/page.tsx
 git commit -m "refactor: remove duplicate Context Slot snapshot from ExecutionTracePanel"
 ```
@@ -229,14 +229,14 @@ user_input: number;
 验证无破坏性引用：
 ```bash
 grep -r "output_format\|user_input" \
-  "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend/src" \
+  "<PROJECT_ROOT>/frontend/src" \
   --include="*.ts" --include="*.tsx" -l
 ```
 
 - [ ] **Step 2.6: TypeScript 编译检查**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx tsc --noEmit
 ```
 
@@ -325,7 +325,7 @@ describe('stateMessages', () => {
 - [ ] **Step 3.2: 运行测试，确认 RED**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/store/use-session.test.ts 2>&1 | tail -20
 ```
 
@@ -419,7 +419,7 @@ npx vitest run tests/components/store/use-session.test.ts 2>&1 | tail -20
 - [ ] **Step 3.4: 运行测试，确认 GREEN**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/store/use-session.test.ts 2>&1 | tail -20
 ```
 
@@ -436,7 +436,7 @@ npx tsc --noEmit
 - [ ] **Step 3.6: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/store/use-session.ts tests/components/store/
 git commit -m "feat: add turnId tracking and stateMessages to session store"
 ```
@@ -523,7 +523,7 @@ class TestSerializeMessage:
 
 运行确认 RED（测试文件引用的 `_serialize_message` 是本地定义，测试本身应该 PASS；这步的目的是确认测试结构和逻辑正确）：
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 python -m pytest tests/backend/unit/test_trace_done_messages.py -v 2>&1 | tail -20
 ```
 
@@ -594,7 +594,7 @@ await self._send_sse_event(
 
 启动后端后发送一条消息，检查 SSE 输出中 `done` 事件的 data 字段包含 `messages` 数组：
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 # 在另一个终端启动后端
 # curl 测试（替换 session_id）
 curl -N -X POST http://localhost:8000/api/chat/stream \
@@ -608,7 +608,7 @@ curl -N -X POST http://localhost:8000/api/chat/stream \
 - [ ] **Step 4.3: Python 语法检查**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/backend"
+cd "<PROJECT_ROOT>/backend"
 python -m py_compile app/agent/middleware/trace.py && echo "OK"
 ```
 
@@ -617,7 +617,7 @@ python -m py_compile app/agent/middleware/trace.py && echo "OK"
 - [ ] **Step 4.4: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add backend/app/agent/middleware/trace.py
 git commit -m "feat: append serialized messages to done SSE event payload"
 ```
@@ -680,7 +680,7 @@ describe('ExecutionTracePanel Turn markers', () => {
 - [ ] **Step 5.2: 运行测试，确认 RED**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/execution-trace/ExecutionTracePanel.test.tsx 2>&1 | tail -20
 ```
 
@@ -801,7 +801,7 @@ npx vitest run tests/components/execution-trace/ExecutionTracePanel.test.tsx 2>&
 - [ ] **Step 5.4: 运行测试，确认 GREEN**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/execution-trace/ExecutionTracePanel.test.tsx 2>&1 | tail -20
 ```
 
@@ -816,7 +816,7 @@ npx tsc --noEmit
 - [ ] **Step 5.6: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/components/ExecutionTracePanel.tsx \
         tests/components/execution-trace/
 git commit -m "feat: add Turn dividers and completion badges to ExecutionTracePanel"
@@ -874,7 +874,7 @@ describe('ContextWindowPanel with EMPTY_CONTEXT_DATA', () => {
 - [ ] **Step 6.2: 运行测试，确认 RED**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/context-window/ContextWindowPanel.test.tsx 2>&1 | tail -20
 ```
 
@@ -954,7 +954,7 @@ npx vitest run tests/components/context-window/ContextWindowPanel.test.tsx 2>&1 
 - [ ] **Step 6.5: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/components/ContextWindowPanel.tsx \
         tests/components/context-window/
 git commit -m "feat: fix 10-slot rendering in ContextWindowPanel, add slots ⑨ and ⑩"
@@ -1125,14 +1125,14 @@ import type { SlotDetailsResponse, StateMessage } from '@/types/context-window';
 - [ ] **Step 7.8: TypeScript 编译检查**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx tsc --noEmit
 ```
 
 - [ ] **Step 7.9: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/app/page.tsx frontend/src/components/ContextWindowPanel.tsx
 git commit -m "feat: wire done event to stateMessages, remove null context guard, add Turn status"
 ```
@@ -1220,7 +1220,7 @@ describe('MessageList compression notification', () => {
 - [ ] **Step 8.2: 运行测试，确认 RED**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run tests/components/message-list/MessageList.test.tsx 2>&1 | tail -20
 ```
 
@@ -1373,7 +1373,7 @@ npx tsc --noEmit
 - [ ] **Step 8.8: Commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add frontend/src/components/MessageList.tsx \
         frontend/src/components/CompressionLog.tsx \
         frontend/src/app/page.tsx \
@@ -1392,7 +1392,7 @@ git commit -m "feat: add tool bubble, compression notification, and CompressionL
 - [ ] **Step 9.1: 运行全量 Vitest 单元测试**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx vitest run 2>&1 | tail -30
 ```
 
@@ -1439,7 +1439,7 @@ test('发送两条消息后，事件流水出现两条 Turn 分隔线', async ({
 - [ ] **Step 9.4: 运行 E2E 测试（需后端在线）**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app/frontend"
+cd "<PROJECT_ROOT>/frontend"
 npx playwright test tests/e2e/06-context-window.spec.ts tests/e2e/09-turn-markers.spec.ts \
   --headed 2>&1 | tail -30
 ```
@@ -1449,7 +1449,7 @@ npx playwright test tests/e2e/06-context-window.spec.ts tests/e2e/09-turn-marker
 - [ ] **Step 9.5: Final commit**
 
 ```bash
-cd "/Users/josh/Documents/work/learn_test/AI Developer Assistant/agent_app"
+cd "<PROJECT_ROOT>"
 git add tests/e2e/
 git commit -m "test: add E2E tests for 10-slot context panel and Turn markers"
 ```

@@ -861,7 +861,7 @@ git commit -m "feat: wire skill_id/mode to SSE connect and handle skill_invoked 
 cd backend && uvicorn app.main:app --reload
 ```
 
-确认日志出现：`✅ [技能] SkillManager 初始化完成，目录: /Users/<you>/.agents/skills`
+确认日志出现：`✅ [技能] SkillManager 初始化完成，目录: <HOME>/.agents/skills`
 
 - [ ] **Step 2: 启动前端**
 

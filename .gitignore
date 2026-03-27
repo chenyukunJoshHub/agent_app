@@ -74,3 +74,23 @@ tmp/
 # Git Worktrees
 .worktrees/
 .claude/worktrees/
+
+# Local AI tooling / personal artifacts
+.claude/
+.project-state/
+.superpowers/
+frontend/.claude/
+planning-with-files/
+findings.md
+progress.md
+task_plan.md
+agent tools.png
+pencil-new.pen
+个人简历.md
+开发工作流.md
+资料/
+backend/coverage.json
+backend/coverage.xml
+tests/node_modules
+htmlcov/
+backend/htmlcov/
