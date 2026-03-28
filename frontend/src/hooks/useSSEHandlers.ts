@@ -124,6 +124,44 @@ export function useSSEHandlers(options: UseSSEHandlersOptions = {}) {
       store.getState().setContextWindowData(data as any);
     });
 
+    sseManager.on('compression', ({ data }) => {
+      const payload = data as {
+        before_tokens?: number;
+        after_tokens?: number;
+        method?: 'summarization' | 'truncation' | 'hybrid';
+        affected_slots?: string[];
+        summary_text?: string;
+      };
+
+      const beforeTokens = Number(payload.before_tokens ?? 0);
+      const afterTokens = Number(payload.after_tokens ?? 0);
+      const method =
+        payload.method === 'truncation' || payload.method === 'hybrid'
+          ? payload.method
+          : 'summarization';
+      const affectedSlots = Array.isArray(payload.affected_slots)
+        ? payload.affected_slots.map((slot) => String(slot))
+        : ['history'];
+      const summaryText = typeof payload.summary_text === 'string' ? payload.summary_text : undefined;
+
+      const contextData = store.getState().contextWindowData;
+      const event = {
+        id: `compression_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        timestamp: Date.now(),
+        before_tokens: beforeTokens,
+        after_tokens: afterTokens,
+        tokens_saved: Math.max(0, beforeTokens - afterTokens),
+        method,
+        affected_slots: affectedSlots,
+        ...(summaryText ? { summary_text: summaryText } : {}),
+      };
+
+      store.getState().setContextWindowData({
+        ...contextData,
+        compressionEvents: [event, ...contextData.compressionEvents],
+      });
+    });
+
     sseManager.on('slot_update', ({ data }) => {
       const updated = data as {
         name: string;

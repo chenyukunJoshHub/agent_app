@@ -33,6 +33,19 @@ if TYPE_CHECKING:
     from langgraph.store.postgres import AsyncPostgresStore
 
 
+def _preview_text(text: str, limit: int = 120) -> str:
+    """将长文本裁剪成日志友好的预览字符串。"""
+    normalized = text.replace("\n", "\\n")
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
+def _preview_list(items: list[str], item_limit: int = 80, max_items: int = 3) -> list[str]:
+    """日志输出时，限制列表项长度和数量。"""
+    return [_preview_text(str(item), item_limit) for item in items[:max_items]]
+
+
 class PlanStepStatus(StrEnum):
     """步骤状态机。"""
 
@@ -126,14 +139,27 @@ class TaskPlanner:
             history: 历史文本列表（用于轻量检索）
         """
         all_history = history or []
+        planner_mode = settings.task_planner_mode
+        logger.debug(
+            "planner.create_plan.start session_id={} planner_mode={} goal_chars={} history_count={}",
+            session_id,
+            planner_mode,
+            len(user_goal),
+            len(all_history),
+        )
         retrieval_hits = self._retrieve_context_hints(
             user_goal=user_goal,
             history=all_history,
             limit=3,
         )
+        logger.debug(
+            "planner.create_plan.retrieval session_id={} retrieval_hit_count={} retrieval_hit_preview={}",
+            session_id,
+            len(retrieval_hits),
+            _preview_list(retrieval_hits),
+        )
 
         # LLM 规划优先（llm/hybrid），失败自动回退规则规划。
-        planner_mode = settings.task_planner_mode
         if planner_mode in {"llm", "hybrid"}:
             llm_plan = self._create_plan_with_llm(
                 session_id=session_id,
@@ -142,6 +168,14 @@ class TaskPlanner:
                 retrieval_hits=retrieval_hits,
             )
             if llm_plan is not None:
+                logger.info(
+                    "planner.create_plan.llm_success session_id={} plan_id={} complexity={} steps={} replan_count={}",
+                    session_id,
+                    llm_plan.plan_id,
+                    llm_plan.complexity,
+                    len(llm_plan.steps),
+                    llm_plan.replan_count,
+                )
                 return llm_plan
 
             logger.warning(
@@ -151,6 +185,13 @@ class TaskPlanner:
 
         segments = self._split_goal(user_goal)
         complexity = "complex" if len(segments) >= 3 else "simple"
+        logger.debug(
+            "planner.create_plan.rule_segments session_id={} complexity={} segment_count={} segment_preview={}",
+            session_id,
+            complexity,
+            len(segments),
+            _preview_list(segments),
+        )
 
         # 复杂任务强制至少 3 步，避免“只有一个大步骤”的伪计划。
         if complexity == "complex":
@@ -159,7 +200,7 @@ class TaskPlanner:
             segments = ["理解目标并执行"]
 
         steps = self._build_steps(segments)
-        return PlanState(
+        plan = PlanState(
             plan_id=f"plan_{uuid.uuid4().hex[:12]}",
             session_id=session_id,
             user_goal=user_goal,
@@ -167,6 +208,14 @@ class TaskPlanner:
             steps=steps,
             retrieval_hits=retrieval_hits,
         )
+        logger.info(
+            "planner.create_plan.rule_success session_id={} plan_id={} complexity={} steps={}",
+            session_id,
+            plan.plan_id,
+            plan.complexity,
+            len(plan.steps),
+        )
+        return plan
 
     def _split_goal(self, goal: str) -> list[str]:
         """将自然语言目标拆分为候选步骤。"""
@@ -174,9 +223,20 @@ class TaskPlanner:
 
         # 过滤过短片段，避免把“再/然后”这类连词当成步骤。
         segments = [p for p in raw_parts if len(p) >= 2]
+        logger.debug(
+            "planner.split_goal raw_parts_count={} segment_count={} raw_preview={} segment_preview={}",
+            len(raw_parts),
+            len(segments),
+            _preview_list(raw_parts),
+            _preview_list(segments),
+        )
 
         # 如果规则拆分失败，保留整句为一个步骤。
         if not segments and goal.strip():
+            logger.debug(
+                "planner.split_goal.fallback_to_whole_sentence goal_preview={}",
+                _preview_text(goal),
+            )
             return [goal.strip()]
         return segments
 
@@ -189,6 +249,10 @@ class TaskPlanner:
         """
         normalized = list(segments)
         if len(normalized) >= 3:
+            logger.debug(
+                "planner.ensure_min_complex_steps.skip original_count={} already_sufficient=true",
+                len(normalized),
+            )
             return normalized
 
         padded = normalized[:]
@@ -200,6 +264,12 @@ class TaskPlanner:
             ]
         elif len(padded) == 2:
             padded.append("整理结论并输出结果")
+        logger.debug(
+            "planner.ensure_min_complex_steps.padded original_count={} new_count={} result_preview={}",
+            len(normalized),
+            len(padded),
+            _preview_list(padded),
+        )
         return padded
 
     def _build_steps(self, segments: list[str]) -> list[PlanStep]:
@@ -216,7 +286,15 @@ class TaskPlanner:
                 max_attempts=2,
             )
             steps.append(step)
+            logger.debug(
+                "planner.build_steps.append idx={} step_id={} depends_on={} title={}",
+                idx,
+                step_id,
+                step.depends_on,
+                _preview_text(seg),
+            )
             prev_id = step_id
+        logger.debug("planner.build_steps.done step_count={}", len(steps))
         return steps
 
     def _keywords(self, text: str) -> set[str]:
@@ -266,6 +344,11 @@ class TaskPlanner:
         - 非法索引忽略
         """
         if not isinstance(raw_depends, list):
+            logger.debug(
+                "planner.normalize_dep_indices.invalid_type step_index={} raw_type={}",
+                step_index,
+                type(raw_depends).__name__,
+            )
             return []
         deps: list[int] = []
         for item in raw_depends:
@@ -279,6 +362,12 @@ class TaskPlanner:
                 continue
             seen.add(dep)
             uniq.append(dep)
+        logger.debug(
+            "planner.normalize_dep_indices.done step_index={} input={} normalized={}",
+            step_index,
+            raw_depends,
+            uniq,
+        )
         return uniq
 
     def _create_plan_with_llm(
@@ -295,9 +384,23 @@ class TaskPlanner:
         失败返回 None，由调用方回退规则规划。
         """
         try:
+            logger.debug(
+                "planner.llm.start session_id={} goal_chars={} history_count={} retrieval_hit_count={}",
+                session_id,
+                len(user_goal),
+                len(history),
+                len(retrieval_hits),
+            )
             llm = llm_factory()
             hint_history = retrieval_hits if retrieval_hits else history[-3:]
             context_text = "\n".join(hint_history)[:1800]
+            logger.debug(
+                "planner.llm.context session_id={} context_source={} context_chars={} context_preview={}",
+                session_id,
+                "retrieval_hits" if retrieval_hits else "recent_history",
+                len(context_text),
+                _preview_text(context_text, limit=180),
+            )
 
             system_prompt = (
                 "你是任务规划器。输出严格 JSON，不要解释。"
@@ -320,7 +423,18 @@ class TaskPlanner:
                 ]
             )
             raw = response.content if isinstance(response.content, str) else str(response.content)
+            logger.debug(
+                "planner.llm.raw_response session_id={} raw_preview={}",
+                session_id,
+                _preview_text(raw, limit=280),
+            )
             payload = self._extract_json_object(raw)
+            logger.debug(
+                "planner.llm.parsed_payload session_id={} keys={} raw_steps_type={}",
+                session_id,
+                sorted(payload.keys()),
+                type(payload.get("steps")).__name__,
+            )
 
             raw_steps = payload.get("steps", [])
             if not isinstance(raw_steps, list) or not raw_steps:
@@ -328,14 +442,31 @@ class TaskPlanner:
 
             max_steps = max(1, settings.task_planner_max_steps)
             raw_steps = raw_steps[:max_steps]
+            logger.debug(
+                "planner.llm.steps_capped session_id={} max_steps={} candidate_count={}",
+                session_id,
+                max_steps,
+                len(raw_steps),
+            )
 
             steps: list[PlanStep] = []
             index_to_id: list[str] = []
             for idx, item in enumerate(raw_steps):
                 if not isinstance(item, dict):
+                    logger.debug(
+                        "planner.llm.step_skipped_non_dict session_id={} index={} item_type={}",
+                        session_id,
+                        idx,
+                        type(item).__name__,
+                    )
                     continue
                 title = str(item.get("title", "")).strip()
                 if not title:
+                    logger.debug(
+                        "planner.llm.step_skipped_empty_title session_id={} index={}",
+                        session_id,
+                        idx,
+                    )
                     continue
 
                 step_id = f"step_{idx + 1}_{uuid.uuid4().hex[:6]}"
@@ -349,6 +480,14 @@ class TaskPlanner:
                 )
                 steps.append(step)
                 index_to_id.append(step_id)
+                logger.debug(
+                    "planner.llm.step_normalized session_id={} index={} step_id={} dep_indices={} title={}",
+                    session_id,
+                    idx,
+                    step_id,
+                    dep_indices,
+                    _preview_text(title),
+                )
 
                 # 第二轮映射前先暂存索引
                 step.depends_on = [str(dep) for dep in dep_indices]
@@ -364,6 +503,12 @@ class TaskPlanner:
                     if 0 <= dep_idx < len(index_to_id):
                         dep_ids.append(index_to_id[dep_idx])
                 step.depends_on = dep_ids
+                logger.debug(
+                    "planner.llm.depends_mapped session_id={} step_id={} depends_on={}",
+                    session_id,
+                    step.id,
+                    step.depends_on,
+                )
 
             complexity_raw = str(payload.get("complexity", "")).strip().lower()
             complexity = complexity_raw if complexity_raw in {"simple", "complex"} else (
@@ -373,8 +518,13 @@ class TaskPlanner:
                 # 复杂任务兜底补齐，避免 LLM 违规输出。
                 tail = self._ensure_minimum_complex_steps([s.title for s in steps], user_goal)
                 steps = self._build_steps(tail)
+                logger.debug(
+                    "planner.llm.complexity_padded session_id={} final_step_count={}",
+                    session_id,
+                    len(steps),
+                )
 
-            return PlanState(
+            plan = PlanState(
                 plan_id=f"plan_{uuid.uuid4().hex[:12]}",
                 session_id=session_id,
                 user_goal=user_goal,
@@ -382,6 +532,15 @@ class TaskPlanner:
                 steps=steps,
                 retrieval_hits=retrieval_hits,
             )
+            logger.info(
+                "planner.llm.success session_id={} plan_id={} complexity={} steps={} retrieval_hit_count={}",
+                session_id,
+                plan.plan_id,
+                plan.complexity,
+                len(plan.steps),
+                len(plan.retrieval_hits),
+            )
+            return plan
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"TaskPlanner: llm plan generation failed: {exc}")
             return None
@@ -401,10 +560,19 @@ class TaskPlanner:
         - 局限：语义召回一般，后续可替换为 Embedding 检索。
         """
         if not history:
+            logger.debug("planner.retrieve_hints.skip_no_history")
             return []
 
         goal_keywords = self._keywords(user_goal)
+        logger.debug(
+            "planner.retrieve_hints.goal session_goal_preview={} goal_keyword_count={} history_count={} limit={}",
+            _preview_text(user_goal),
+            len(goal_keywords),
+            len(history),
+            limit,
+        )
         if not goal_keywords:
+            logger.debug("planner.retrieve_hints.skip_no_goal_keywords")
             return []
 
         scored: list[tuple[int, int, str]] = []
@@ -414,12 +582,25 @@ class TaskPlanner:
                 continue
             item_keywords = self._keywords(item_text)
             score = len(goal_keywords.intersection(item_keywords))
+            logger.debug(
+                "planner.retrieve_hints.scored index={} score={} item_keyword_count={} item_preview={}",
+                idx,
+                score,
+                len(item_keywords),
+                _preview_text(item_text),
+            )
             # 第二关键字：索引越大越新，分值相同优先近历史。
             if score > 0:
                 scored.append((score, idx, item_text))
 
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        return [item for _, _, item in scored[: max(1, limit)]]
+        selected = [item for _, _, item in scored[: max(1, limit)]]
+        logger.debug(
+            "planner.retrieve_hints.selected selected_count={} selected_preview={}",
+            len(selected),
+            _preview_list(selected),
+        )
+        return selected
 
 
 class Replanner:
@@ -431,7 +612,17 @@ class Replanner:
     def should_replan(self, plan: PlanState, error: str) -> bool:
         """判断当前计划是否还能重规划。"""
         _ = error  # 预留：后续可按错误类型做策略分流。
-        return plan.replan_count < min(plan.max_replans, self.max_replans or plan.max_replans)
+        threshold = min(plan.max_replans, self.max_replans or plan.max_replans)
+        decision = plan.replan_count < threshold
+        logger.debug(
+            "planner.replan.should_replan plan_id={} replan_count={} threshold={} decision={} error_preview={}",
+            plan.plan_id,
+            plan.replan_count,
+            threshold,
+            decision,
+            _preview_text(error),
+        )
+        return decision
 
     def apply(self, *, plan: PlanState, failed_step_id: str | None, error: str) -> PlanState:
         """
@@ -440,7 +631,20 @@ class Replanner:
         - 在失败步骤后插入“重试/降级”恢复步骤；
         - 递增 replan_count。
         """
+        logger.debug(
+            "planner.replan.apply.start plan_id={} failed_step_id={} step_count={} replan_count={} error_preview={}",
+            plan.plan_id,
+            failed_step_id,
+            len(plan.steps),
+            plan.replan_count,
+            _preview_text(error),
+        )
         if not self.should_replan(plan, error):
+            logger.info(
+                "planner.replan.apply.skipped plan_id={} reason=max_replans_reached replan_count={}",
+                plan.plan_id,
+                plan.replan_count,
+            )
             return plan.clone()
 
         new_plan = plan.clone()
@@ -466,6 +670,15 @@ class Replanner:
             max_attempts=1,
         )
         new_plan.steps.insert(failed_index + 1, recovery_step)
+        logger.info(
+            "planner.replan.apply.done plan_id={} failed_step_id={} recovery_step_id={} old_step_count={} new_step_count={} replan_count={}",
+            new_plan.plan_id,
+            failed_step.id,
+            recovery_step.id,
+            len(plan.steps),
+            len(new_plan.steps),
+            new_plan.replan_count,
+        )
         return new_plan
 
 
@@ -553,14 +766,23 @@ class TaskRuntimeStore:
 
     async def _persist_plan(self, session_id: str) -> None:
         if self.store is None:
+            logger.debug("planner.runtime.persist.skip_no_store session_id={}", session_id)
             return
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug("planner.runtime.persist.skip_no_plan session_id={}", session_id)
             return
         await self.store.aput(
             namespace=self.namespace,
             key=session_id,
             value=self._serialize_plan(plan),
+        )
+        logger.debug(
+            "planner.runtime.persist.done session_id={} plan_id={} step_count={} replan_count={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+            plan.replan_count,
         )
 
     async def aload_plan(self, session_id: str) -> PlanState | None:
@@ -569,29 +791,78 @@ class TaskRuntimeStore:
         """
         plan = self._plans.get(session_id)
         if plan is not None:
+            logger.debug(
+                "planner.runtime.aload.hit_memory session_id={} plan_id={} step_count={}",
+                session_id,
+                plan.plan_id,
+                len(plan.steps),
+            )
             return plan
         if self.store is None:
+            logger.debug("planner.runtime.aload.miss_no_store session_id={}", session_id)
             return None
         item = await self.store.aget(namespace=self.namespace, key=session_id)
         if item is None:
+            logger.debug("planner.runtime.aload.miss_store session_id={}", session_id)
             return None
         if not isinstance(item.value, dict):
+            logger.warning(
+                "planner.runtime.aload.invalid_payload session_id={} value_type={}",
+                session_id,
+                type(item.value).__name__,
+            )
             return None
         plan = self._deserialize_plan(item.value)
         self._plans[session_id] = plan
+        logger.info(
+            "planner.runtime.aload.hit_store session_id={} plan_id={} step_count={} replan_count={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+            plan.replan_count,
+        )
         return plan
 
     async def aset_plan(self, session_id: str, plan: PlanState) -> None:
+        logger.debug(
+            "planner.runtime.aset_plan.start session_id={} plan_id={} step_count={} complexity={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+            plan.complexity,
+        )
         self.set_plan(session_id, plan)
         await self._persist_plan(session_id)
+        logger.debug(
+            "planner.runtime.aset_plan.done session_id={} plan_id={}",
+            session_id,
+            plan.plan_id,
+        )
 
     def set_plan(self, session_id: str, plan: PlanState) -> None:
         """写入/覆盖 session 计划。"""
         self._plans[session_id] = plan
+        logger.debug(
+            "planner.runtime.set_plan session_id={} plan_id={} step_count={} complexity={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+            plan.complexity,
+        )
 
     def get_plan(self, session_id: str) -> PlanState | None:
         """读取 session 计划。"""
-        return self._plans.get(session_id)
+        plan = self._plans.get(session_id)
+        if plan is None:
+            logger.debug("planner.runtime.get_plan.miss session_id={}", session_id)
+            return None
+        logger.debug(
+            "planner.runtime.get_plan.hit session_id={} plan_id={} step_count={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+        )
+        return plan
 
     def mark_next_step_running(self, session_id: str, tool_name: str | None = None) -> PlanStep | None:
         """
@@ -604,6 +875,11 @@ class TaskRuntimeStore:
         _ = tool_name
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug(
+                "planner.runtime.mark_next_step_running.miss_plan session_id={} tool_name={}",
+                session_id,
+                tool_name,
+            )
             return None
 
         for idx, step in enumerate(plan.steps):
@@ -612,7 +888,23 @@ class TaskRuntimeStore:
                 step.attempts += 1
                 plan.current_step_index = idx
                 plan.updated_at = time.time()
+                logger.info(
+                    "planner.runtime.mark_next_step_running.done session_id={} plan_id={} step_id={} step_index={} attempts={} tool_name={} depends_on={}",
+                    session_id,
+                    plan.plan_id,
+                    step.id,
+                    idx,
+                    step.attempts,
+                    tool_name,
+                    step.depends_on,
+                )
                 return step
+        logger.debug(
+            "planner.runtime.mark_next_step_running.no_pending session_id={} plan_id={} step_count={}",
+            session_id,
+            plan.plan_id,
+            len(plan.steps),
+        )
         return None
 
     async def amark_next_step_running(
@@ -639,14 +931,27 @@ class TaskRuntimeStore:
         """
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug("planner.runtime.mark_running_step_succeeded.miss_plan session_id={}", session_id)
             return None
 
         step = self._get_running_step(plan)
         if step is None:
+            logger.warning(
+                "planner.runtime.mark_running_step_succeeded.invalid_transition session_id={} plan_id={}",
+                session_id,
+                plan.plan_id,
+            )
             raise ValueError("No RUNNING step to mark as SUCCEEDED")
 
         step.status = PlanStepStatus.SUCCEEDED
         plan.updated_at = time.time()
+        logger.info(
+            "planner.runtime.mark_running_step_succeeded.done session_id={} plan_id={} step_id={} attempts={}",
+            session_id,
+            plan.plan_id,
+            step.id,
+            step.attempts,
+        )
         return step
 
     async def amark_running_step_succeeded(self, session_id: str) -> PlanStep | None:
@@ -665,15 +970,30 @@ class TaskRuntimeStore:
         """
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug("planner.runtime.mark_running_step_failed.miss_plan session_id={}", session_id)
             return None
 
         step = self._get_running_step(plan)
         if step is None:
+            logger.warning(
+                "planner.runtime.mark_running_step_failed.invalid_transition session_id={} plan_id={} error_preview={}",
+                session_id,
+                plan.plan_id,
+                _preview_text(error),
+            )
             raise ValueError("No RUNNING step to mark as FAILED")
 
         step.status = PlanStepStatus.FAILED
         step.last_error = error
         plan.updated_at = time.time()
+        logger.info(
+            "planner.runtime.mark_running_step_failed.done session_id={} plan_id={} step_id={} attempts={} error_preview={}",
+            session_id,
+            plan.plan_id,
+            step.id,
+            step.attempts,
+            _preview_text(error),
+        )
         return step
 
     async def amark_running_step_failed(self, session_id: str, error: str) -> PlanStep | None:
@@ -691,11 +1011,21 @@ class TaskRuntimeStore:
         """
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug("planner.runtime.mark_plan_completed.miss_plan session_id={}", session_id)
             return None
+        patched = 0
         for step in plan.steps:
             if step.status == PlanStepStatus.PENDING:
                 step.status = PlanStepStatus.SUCCEEDED
+                patched += 1
         plan.updated_at = time.time()
+        logger.info(
+            "planner.runtime.mark_plan_completed.done session_id={} plan_id={} patched_steps={} total_steps={}",
+            session_id,
+            plan.plan_id,
+            patched,
+            len(plan.steps),
+        )
         return plan
 
     async def amark_plan_completed(self, session_id: str) -> PlanState | None:
@@ -709,8 +1039,18 @@ class TaskRuntimeStore:
         """对外暴露重规划触发判断。"""
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug("planner.runtime.should_replan.miss_plan session_id={}", session_id)
             return False
-        return self._replanner.should_replan(plan, error)
+        decision = self._replanner.should_replan(plan, error)
+        logger.debug(
+            "planner.runtime.should_replan.done session_id={} plan_id={} decision={} replan_count={} error_preview={}",
+            session_id,
+            plan.plan_id,
+            decision,
+            plan.replan_count,
+            _preview_text(error),
+        )
+        return decision
 
     async def ashould_replan(self, session_id: str, error: str) -> bool:
         plan = await self.aload_plan(session_id)
@@ -722,6 +1062,11 @@ class TaskRuntimeStore:
         """执行重规划并返回摘要。"""
         plan = self._plans.get(session_id)
         if plan is None:
+            logger.debug(
+                "planner.runtime.apply_replan.miss_plan session_id={} error_preview={}",
+                session_id,
+                _preview_text(error),
+            )
             return {"updated": False, "reason": "plan_not_found"}
 
         failed_step_id: str | None = None
@@ -738,13 +1083,22 @@ class TaskRuntimeStore:
                     break
 
         old_count = len(plan.steps)
+        logger.info(
+            "planner.runtime.apply_replan.start session_id={} plan_id={} failed_step_id={} old_step_count={} replan_count={} error_preview={}",
+            session_id,
+            plan.plan_id,
+            failed_step_id,
+            old_count,
+            plan.replan_count,
+            _preview_text(error),
+        )
         new_plan = self._replanner.apply(
             plan=plan,
             failed_step_id=failed_step_id,
             error=error,
         )
         self._plans[session_id] = new_plan
-        return {
+        summary = {
             "updated": True,
             "plan_id": new_plan.plan_id,
             "replan_count": new_plan.replan_count,
@@ -752,6 +1106,16 @@ class TaskRuntimeStore:
             "new_step_count": len(new_plan.steps),
             "failed_step_id": failed_step_id,
         }
+        logger.info(
+            "planner.runtime.apply_replan.done session_id={} plan_id={} replan_count={} old_step_count={} new_step_count={} failed_step_id={}",
+            session_id,
+            new_plan.plan_id,
+            new_plan.replan_count,
+            old_count,
+            len(new_plan.steps),
+            failed_step_id,
+        )
+        return summary
 
     async def aapply_replan(self, session_id: str, error: str) -> dict[str, Any]:
         await self.aload_plan(session_id)
@@ -779,6 +1143,11 @@ def evaluate_long_context_cases(
     if not cases:
         return {"baseline_success_rate": 0.0, "planner_success_rate": 0.0}
 
+    logger.info(
+        "planner.evaluate_long_context.start case_count={} baseline_window={}",
+        len(cases),
+        baseline_window,
+    )
     baseline_success = 0
     planner_success = 0
 
@@ -788,7 +1157,8 @@ def evaluate_long_context_cases(
         expected_keywords = [str(x) for x in case.get("expected_keywords", []) if str(x)]
 
         baseline_text = "\n".join(history[-baseline_window:])
-        if any(k in baseline_text for k in expected_keywords):
+        baseline_hit = any(k in baseline_text for k in expected_keywords)
+        if baseline_hit:
             baseline_success += 1
 
         plan = planner.create_plan(
@@ -797,11 +1167,26 @@ def evaluate_long_context_cases(
             history=history,
         )
         planner_text = "\n".join(plan.retrieval_hits)
-        if any(k in planner_text for k in expected_keywords):
+        planner_hit = any(k in planner_text for k in expected_keywords)
+        if planner_hit:
             planner_success += 1
+        logger.debug(
+            "planner.evaluate_long_context.case idx={} goal_preview={} baseline_hit={} planner_hit={} retrieval_hit_count={}",
+            idx,
+            _preview_text(goal),
+            baseline_hit,
+            planner_hit,
+            len(plan.retrieval_hits),
+        )
 
     total = float(len(cases))
-    return {
+    metrics = {
         "baseline_success_rate": baseline_success / total,
         "planner_success_rate": planner_success / total,
     }
+    logger.info(
+        "planner.evaluate_long_context.done baseline_success_rate={} planner_success_rate={}",
+        metrics["baseline_success_rate"],
+        metrics["planner_success_rate"],
+    )
+    return metrics

@@ -224,7 +224,7 @@ P2 弹性历史区：24,576 - 6,900 = 17,676 Token（压缩触发频率极低）
       ├─ 保留区：msg16~msg20（最近 5 条，保持当前上下文）
       └─ 压缩区：msg1~msg15 → 发给 LLM 生成摘要（< 400 Token）
       │
-  压缩后：[SystemMessage("摘要：用户在处理合同123审批流程..."), msg16~msg20]
+  压缩后：[HumanMessage("Here is a summary of the conversation to date: ..."), msg16~msg20]
   Token：400 + ~1500 = 1900（原来 6000 → 压缩至 32%）
 
 压缩 Prompt 核心原则：
@@ -480,6 +480,8 @@ LLM 调用 在 middleware 内部执行摘要，不需要自定义 summarize_node
 执行行为：
   1) 当会话历史接近预算阈值时，摘要旧消息
   2) 将摘要结果写回 state["messages"]（持久化，后续 turn 可复用）
+     · 框架默认写回类型为 HumanMessage（additional_kwargs.lc_source="summarization"）
+     · 不是 SystemMessage，也不是临时 Ephemeral 注入
   3) 保留最近 keep 配置指定的消息窗口
 
 当前项目状态：

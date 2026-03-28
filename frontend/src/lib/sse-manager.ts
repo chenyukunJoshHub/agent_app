@@ -16,6 +16,7 @@ const EVENT_TYPES: SSEEventType[] = [
   'trace_block',
   'thought',
   'hil_interrupt',
+  'compression',
   'token_update',
   'context_window',
   'slot_details',
@@ -35,6 +36,7 @@ export type SSEEventType =
   | 'trace_block'
   | 'thought'
   | 'hil_interrupt'
+  | 'compression'
   | 'token_update'
   | 'context_window'
   | 'slot_details'

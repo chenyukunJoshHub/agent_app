@@ -15,7 +15,65 @@ from typing import Any
 
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langchain.chat_models.base import BaseChatModel
+from langchain_core.messages import HumanMessage, RemoveMessage
 from loguru import logger
+
+
+class ObservableSummarizationMiddleware(SummarizationMiddleware):
+    """Summarization middleware with compression SSE observability."""
+
+    async def abefore_model(
+        self,
+        state: dict[str, Any],
+        runtime: Any,
+    ) -> dict[str, Any] | None:
+        messages = state.get("messages", [])
+        update = await super().abefore_model(state, runtime)
+        if not update:
+            return update
+
+        await self._emit_compression_event(messages, update, runtime)
+        return update
+
+    async def _emit_compression_event(
+        self,
+        original_messages: list[Any],
+        update: dict[str, Any],
+        runtime: Any,
+    ) -> None:
+        context = getattr(runtime, "context", None)
+        sse_queue = getattr(context, "sse_queue", None)
+        if sse_queue is None:
+            return
+
+        updated_messages = update.get("messages", [])
+        persisted_messages = [
+            msg for msg in updated_messages if not isinstance(msg, RemoveMessage)
+        ]
+        summary_text = ""
+        for msg in persisted_messages:
+            if (
+                isinstance(msg, HumanMessage)
+                and msg.additional_kwargs.get("lc_source") == "summarization"
+            ):
+                summary_text = str(msg.content)
+                break
+
+        before_tokens = int(self.token_counter(original_messages))
+        after_tokens = int(self.token_counter(persisted_messages)) if persisted_messages else 0
+
+        payload = {
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "method": "summarization",
+            "affected_slots": ["history"],
+            "summary_text": summary_text,
+        }
+
+        try:
+            await sse_queue.put(("compression", payload))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Failed to emit compression SSE event: {exc}")
 
 
 def create_summarization_middleware(
@@ -76,7 +134,7 @@ def create_summarization_middleware(
         # Already a ChatModel instance, use directly
         logger.debug("Using provided ChatModel instance for summarization")
 
-    middleware = SummarizationMiddleware(
+    middleware = ObservableSummarizationMiddleware(
         model=model,
         trigger=trigger,  # type: ignore
         keep=keep,  # type: ignore
@@ -90,4 +148,8 @@ def create_summarization_middleware(
     return middleware
 
 
-__all__ = ["create_summarization_middleware", "SummarizationMiddleware"]
+__all__ = [
+    "ObservableSummarizationMiddleware",
+    "create_summarization_middleware",
+    "SummarizationMiddleware",
+]
