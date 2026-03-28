@@ -279,6 +279,34 @@ class TraceBlockBuilder:
                 },
             )]
 
+        if stage == "planner" and step == "step_running":
+            self._flush_pending()
+            return [self._build_block(
+                block_type="planning",
+                status="pending",
+                timestamp=event.get("timestamp", _iso_now()),
+                detail=f"执行步骤中：{payload.get('title', '')}",
+                planning={
+                    "plan_id": str(payload.get("plan_id", "")),
+                    "step_count": int(payload.get("step_count", 0)),
+                    "complexity": "in_progress",
+                },
+            )]
+
+        if stage == "planner" and step == "step_succeeded":
+            self._flush_pending()
+            return [self._build_block(
+                block_type="planning",
+                status="ok",
+                timestamp=event.get("timestamp", _iso_now()),
+                detail=f"步骤完成：{payload.get('title', '')}",
+                planning={
+                    "plan_id": str(payload.get("plan_id", "")),
+                    "step_count": int(payload.get("step_count", 0)),
+                    "complexity": "in_progress",
+                },
+            )]
+
         if stage == "planner" and step == "plan_completed":
             self._flush_pending()
             step_count = int(payload.get("step_count", 0))

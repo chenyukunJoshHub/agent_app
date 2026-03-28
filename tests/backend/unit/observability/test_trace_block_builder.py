@@ -366,6 +366,34 @@ class TestPlannerBlocks:
         assert blocks[0]["type"] == "retrieval"
         assert blocks[0]["retrieval"]["hits"] == 2
 
+    def test_step_running_emits_pending_planning_block(self):
+        builder = TraceBlockBuilder()
+        blocks = builder.on_trace_event(
+            _make_event(
+                stage="planner",
+                step="step_running",
+                payload={"step_id": "s1", "title": "检索合同风险"},
+            )
+        )
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "planning"
+        assert blocks[0]["status"] == "pending"
+        assert "执行步骤中" in blocks[0]["detail"]
+
+    def test_step_succeeded_emits_ok_planning_block(self):
+        builder = TraceBlockBuilder()
+        blocks = builder.on_trace_event(
+            _make_event(
+                stage="planner",
+                step="step_succeeded",
+                payload={"step_id": "s1", "title": "检索合同风险"},
+            )
+        )
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "planning"
+        assert blocks[0]["status"] == "ok"
+        assert "步骤完成" in blocks[0]["detail"]
+
     def test_replanner_events_emit_replanning_blocks(self):
         builder = TraceBlockBuilder()
         triggered = builder.on_trace_event(

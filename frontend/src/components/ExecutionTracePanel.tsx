@@ -47,7 +47,10 @@ function eventMatchesBlock(block: TraceBlock, event: TraceEvent): boolean {
         (event.stage === 'react' && event.step === 'turn_start')
       );
     case 'planning':
-      return event.stage === 'planner' && ['plan_created', 'plan_completed'].includes(event.step);
+      return (
+        event.stage === 'planner' &&
+        ['plan_created', 'step_running', 'step_succeeded', 'plan_completed'].includes(event.step)
+      );
     case 'retrieval':
       return event.stage === 'retrieval' && event.step === 'context_retrieved';
     case 'replanning':
