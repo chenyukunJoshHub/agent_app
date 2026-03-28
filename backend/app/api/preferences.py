@@ -30,19 +30,10 @@ async def get_preferences(user_id: str = "dev_user") -> dict:
 @router.post("/preferences")
 async def set_preferences(req: PreferencesRequest) -> dict:
     """写入或更新用户画像偏好（merge 语义，不覆盖未涉及的 key）。"""
-    store = await get_store()
-    mm = MemoryManager(store=store)
+    mm = MemoryManager(store=await get_store())
     profile = await mm.load_episodic(req.user_id)
     profile.preferences.update(req.preferences)
-
-    # NOTE:
-    # MemoryManager.save_episodic() 在当前阶段仍是 no-op。
-    # 这里直接落库，确保 API 的“写入/更新”语义真实生效。
-    await store.aput(
-        namespace=("profile", req.user_id),
-        key="episodic",
-        value=profile.model_dump(),
-    )
+    await mm.save_episodic(req.user_id, profile)
     return {"status": "ok", "user_id": req.user_id, "preferences": profile.preferences}
 
 

@@ -7,10 +7,12 @@ Based on Prompt v20 §1.2 十大子模块与 Context Window 分区
 """
 import pytest
 from pathlib import Path
+from dataclasses import dataclass
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.skills.manager import SkillManager
+import app.api.context as context_api
 
 
 @pytest.fixture(autouse=True)
@@ -181,6 +183,67 @@ class TestGetSessionSlots:
 
         # Timestamp should be a float
         assert isinstance(data["timestamp"], float)
+
+    def test_episodic_slot_uses_real_profile_when_available(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """应从真实 store 读取 episodic，并体现在 episodic slot。"""
+
+        @dataclass
+        class _Item:
+            value: dict
+
+        class _FakeStore:
+            async def aget(self, namespace, key):  # noqa: ANN001
+                if namespace == ("profile", "u-slot") and key == "episodic":
+                    return _Item(
+                        value={
+                            "user_id": "u-slot",
+                            "preferences": {"domain": "legal-tech", "language": "zh"},
+                            "interaction_count": 3,
+                            "summary": "",
+                            "content": "",
+                        }
+                    )
+                return None
+
+        async def fake_get_store():
+            return _FakeStore()
+
+        monkeypatch.setattr(context_api, "get_store", fake_get_store)
+
+        response = client.get("/session/test-session/slots", params={"user_id": "u-slot"})
+        assert response.status_code == 200
+        data = response.json()
+        slots = data["slots"]
+        episodic_slot = next((s for s in slots if s["name"] == "episodic"), None)
+        assert episodic_slot is not None
+        assert episodic_slot["enabled"] is True
+        assert "legal-tech" in episodic_slot["content"]
+        assert episodic_slot["tokens"] > 0
+
+    def test_slots_endpoint_fallbacks_when_memory_store_unavailable(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """内存库异常时应降级返回，不应 500。"""
+
+        async def failing_get_store():
+            raise RuntimeError("store unavailable")
+
+        monkeypatch.setattr(context_api, "get_store", failing_get_store)
+
+        response = client.get("/session/test-session/slots", params={"user_id": "u-slot"})
+        assert response.status_code == 200
+        data = response.json()
+        slots = data["slots"]
+        episodic_slot = next((s for s in slots if s["name"] == "episodic"), None)
+        assert episodic_slot is not None
+        assert episodic_slot["enabled"] is False
+        assert episodic_slot["tokens"] == 0
 
 
 @pytest.fixture

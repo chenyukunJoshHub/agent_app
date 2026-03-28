@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from loguru import logger
 
+from app.db.postgres import get_store
+from app.memory.manager import MemoryManager
 from app.prompt.budget import DEFAULT_BUDGET
 from app.prompt.builder import get_slot_snapshot
 from app.skills.manager import SkillManager
@@ -138,7 +140,10 @@ async def get_session_context(session_id: str) -> ContextResponse:
 
 
 @router.get("/{session_id}/slots", response_model=SlotDetailsResponse)
-async def get_session_slots(session_id: str) -> SlotDetailsResponse:
+async def get_session_slots(
+    session_id: str,
+    user_id: str = "dev_user",
+) -> SlotDetailsResponse:
     """
     Get session Slot content details with token counts.
 
@@ -155,9 +160,15 @@ async def get_session_slots(session_id: str) -> SlotDetailsResponse:
         skill_manager = SkillManager.get_instance()
         skill_snapshot = skill_manager.build_snapshot()
 
-        # Get user profile (episodic memory)
-        # Note: MemoryManager requires DB connection, skip for P0
         episodic = None
+        try:
+            store = await get_store()
+            mm = MemoryManager(store=store)
+            episodic = await mm.load_episodic(user_id)
+        except Exception as mem_err:  # noqa: BLE001
+            logger.warning(
+                f"slots endpoint: episodic load failed for user_id={user_id}, fallback empty: {mem_err}"
+            )
 
         # Get available tools (hardcoded for P0/P1)
         available_tools = ["web_search", "send_email", "read_file"]
