@@ -2,39 +2,42 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, X, ChevronDown, ChevronRight, Check, X as XIcon } from 'lucide-react';
+import {
+  AlertTriangle,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Check,
+  X as XIcon,
+  Wrench,
+} from 'lucide-react';
+import type { InterruptData } from '@/hooks/useSSEHandlers';
 import { cn } from '@/lib/utils';
-
-interface ToolArgs {
-  to?: string;
-  subject?: string;
-  body?: string;
-  [key: string]: unknown;
-}
-
-interface InterruptData {
-  interrupt_id: string;
-  tool_name: string;
-  tool_args: ToolArgs;
-  risk_level: 'high' | 'medium' | 'low';
-  message: string;
-}
 
 interface ConfirmModalProps {
   isOpen: boolean;
   interrupt: InterruptData | null;
-  onConfirm: (interruptId: string) => void;
+  onConfirm: (interruptId: string, grantSession: boolean) => void;
   onCancel: (interruptId: string) => void;
 }
 
 export function ConfirmModal({ isOpen, interrupt, onConfirm, onCancel }: ConfirmModalProps) {
   const [showParams, setShowParams] = useState(false);
+  const [grantSession, setGrantSession] = useState(false);
 
   if (!isOpen || !interrupt) {
     return null;
   }
 
   const { interrupt_id, tool_name, tool_args, risk_level, message } = interrupt;
+  const actionRequests =
+    interrupt.action_requests && interrupt.action_requests.length > 0
+      ? interrupt.action_requests
+      : [{ name: tool_name, args: tool_args }];
+  const uniqueToolNames = new Set(actionRequests.map((action) => action.name));
+  const canGrantSession =
+    interrupt.grant_session_supported ?? uniqueToolNames.size === 1;
+  const grantTargetTool = canGrantSession ? actionRequests[0]?.name ?? tool_name : null;
 
   const riskConfig = {
     high: {
@@ -64,12 +67,14 @@ export function ConfirmModal({ isOpen, interrupt, onConfirm, onCancel }: Confirm
   const RiskIcon = config.icon;
 
   const handleConfirm = () => {
-    onConfirm(interrupt_id);
+    onConfirm(interrupt_id, grantSession);
+    setGrantSession(false);
   };
 
   const handleCancel = () => {
     onCancel(interrupt_id);
     setShowParams(false);
+    setGrantSession(false);
   };
 
   return (
@@ -124,54 +129,78 @@ export function ConfirmModal({ isOpen, interrupt, onConfirm, onCancel }: Confirm
 
               {/* Content */}
               <div className="p-6 space-y-4">
-                {/* Tool Name */}
-                <div>
-                  <label className="text-sm font-medium text-text-primary mb-2 block">
-                    操作工具
-                  </label>
-                  <div className="rounded-lg bg-background-muted px-4 py-3 text-sm font-mono text-text-primary border border-border">
-                    <Wrench className="w-4 h-4 inline mr-2 text-primary" />
-                    {tool_name}
-                  </div>
-                </div>
-
-                {/* Tool Args */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-text-primary">操作参数</label>
-                    <button
-                      onClick={() => setShowParams(!showParams)}
-                      className="text-xs text-primary hover:text-primary-hover transition-colors flex items-center gap-1"
-                    >
-                      {showParams ? (
-                        <>
-                          <ChevronDown className="w-3 h-3" />
-                          收起
-                        </>
-                      ) : (
-                        <>
-                          <ChevronRight className="w-3 h-3" />
-                          展开
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  {showParams ? (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      className="rounded-lg bg-background-muted p-4 border border-border"
-                    >
-                      <pre className="overflow-x-auto text-xs text-text-primary">
-                        {JSON.stringify(tool_args, null, 2)}
-                      </pre>
-                    </motion.div>
-                  ) : (
-                    <div className="rounded-lg bg-background-muted px-4 py-3 text-sm text-text-secondary border border-border">
-                      {Object.keys(tool_args).length} 个参数
+                {actionRequests.length === 1 ? (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium text-text-primary mb-2 block">
+                        操作工具
+                      </label>
+                      <div className="rounded-lg bg-background-muted px-4 py-3 text-sm font-mono text-text-primary border border-border">
+                        <Wrench className="w-4 h-4 inline mr-2 text-primary" />
+                        {tool_name}
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium text-text-primary">操作参数</label>
+                        <button
+                          onClick={() => setShowParams(!showParams)}
+                          className="text-xs text-primary hover:text-primary-hover transition-colors flex items-center gap-1"
+                        >
+                          {showParams ? (
+                            <>
+                              <ChevronDown className="w-3 h-3" />
+                              收起
+                            </>
+                          ) : (
+                            <>
+                              <ChevronRight className="w-3 h-3" />
+                              展开
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      {showParams ? (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          className="rounded-lg bg-background-muted p-4 border border-border"
+                        >
+                          <pre className="overflow-x-auto text-xs text-text-primary">
+                            {JSON.stringify(tool_args, null, 2)}
+                          </pre>
+                        </motion.div>
+                      ) : (
+                        <div className="rounded-lg bg-background-muted px-4 py-3 text-sm text-text-secondary border border-border">
+                          {Object.keys(tool_args).length} 个参数
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <label className="text-sm font-medium text-text-primary mb-2 block">
+                      需审批操作（{actionRequests.length}）
+                    </label>
+                    <div className="space-y-3">
+                      {actionRequests.map((action, index) => (
+                        <div
+                          key={`${action.name}-${index}`}
+                          className="rounded-lg border border-border bg-background-muted p-4"
+                        >
+                          <div className="text-sm font-mono text-text-primary">
+                            <Wrench className="w-4 h-4 inline mr-2 text-primary" />
+                            {action.name}
+                          </div>
+                          <pre className="mt-3 overflow-x-auto text-xs text-text-secondary">
+                            {JSON.stringify(action.args, null, 2)}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Warning */}
                 <div className="rounded-lg bg-warning-bg border border-warning-text/20 p-4">
@@ -183,6 +212,29 @@ export function ConfirmModal({ isOpen, interrupt, onConfirm, onCancel }: Confirm
                     </p>
                   </div>
                 </div>
+
+                {canGrantSession && grantTargetTool ? (
+                  <label className="flex items-start gap-3 rounded-lg border border-border bg-background-muted px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={grantSession}
+                      onChange={(event) => setGrantSession(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="本会话内不再询问此工具"
+                    />
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium text-text-primary">本会话内不再询问此工具</div>
+                      <p className="text-xs text-text-secondary">
+                        后续在当前会话再次调用 <span className="font-mono">{grantTargetTool}</span> 时将直接放行，
+                        你仍可在右侧上下文面板或移动端会话栏中随时撤销。
+                      </p>
+                    </div>
+                  </label>
+                ) : (
+                  <div className="rounded-lg border border-border bg-background-muted px-4 py-3 text-xs text-text-secondary">
+                    本次审批包含多个工具类型，不能一次性设置“本会话自动放行”。
+                  </div>
+                )}
               </div>
 
               {/* Footer */}
@@ -213,5 +265,3 @@ export function ConfirmModal({ isOpen, interrupt, onConfirm, onCancel }: Confirm
     </AnimatePresence>
   );
 }
-
-import { Wrench } from 'lucide-react';

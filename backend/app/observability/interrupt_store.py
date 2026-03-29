@@ -38,6 +38,10 @@ class InterruptStore:
         session_id: str,
         tool_name: str,
         tool_args: dict[str, Any],
+        interrupt_id: str | None = None,
+        allowed_decisions: list[str] | None = None,
+        action_requests: list[dict[str, Any]] | None = None,
+        review_configs: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         Save a new interrupt state.
@@ -50,13 +54,16 @@ class InterruptStore:
         Returns:
             str: Generated interrupt_id (UUID)
         """
-        interrupt_id = str(uuid.uuid4())
+        interrupt_id = interrupt_id or str(uuid.uuid4())
 
         interrupt_data = {
             "interrupt_id": interrupt_id,
             "session_id": session_id,
             "tool_name": tool_name,
             "tool_args": tool_args,
+            "allowed_decisions": list(allowed_decisions or []),
+            "action_requests": list(action_requests or []),
+            "review_configs": list(review_configs or []),
             "status": "pending",
             "created_at": datetime.now(UTC).isoformat(),
             "expires_at": (
@@ -95,6 +102,22 @@ class InterruptStore:
 
             # Item.value contains the stored data
             interrupt_data = item.value
+            expires_at = interrupt_data.get("expires_at")
+            if isinstance(expires_at, str):
+                try:
+                    expires_at_dt = datetime.fromisoformat(expires_at)
+                    if expires_at_dt <= datetime.now(UTC):
+                        interrupt_data["status"] = "expired"
+                        interrupt_data["updated_at"] = datetime.now(UTC).isoformat()
+                        await self.store.aput(
+                            namespace=self.namespace,
+                            key=interrupt_id,
+                            value=interrupt_data,
+                        )
+                        logger.warning(f"Interrupt expired: {interrupt_id}")
+                        return None
+                except ValueError:
+                    logger.warning(f"Interrupt has invalid expires_at format: {interrupt_id}")
             logger.debug(f"Interrupt retrieved: {interrupt_id}")
             return interrupt_data
 

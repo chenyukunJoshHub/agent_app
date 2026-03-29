@@ -1073,6 +1073,8 @@ Skill 内容存储（SKILL.md 文件）：
 🔧 自行开发：
   SkillManager             扫描目录、解析 frontmatter、构建 Snapshot
   build_snapshot()         生成 SkillSnapshot（prompt + metadata 列表）
+  scan mtime 缓存          path→st_mtime_ns，未变化复用解析结果；变更/新增/删除自动失效
+  read_skill_content()     scan 同步构建 name 索引，activate_skill 走 O(1) 查找
   Skill Protocol 文本       基础 4 条 + 手动指定约定写入 System Prompt 的自然语言文本
   read_file 函数体          文件读取逻辑（含 ~ 展开、大小校验）
   字符预算三级降级           完整 → 紧凑 → 二分截断
@@ -1083,9 +1085,11 @@ Skill 内容存储（SKILL.md 文件）：
 
 ```
 🔴 P0（当前阶段，已落地）：
-  · read_file @tool（含 ~ 路径展开、路径校验、大小上限）✅
+  · read_file @tool（含 ~ 路径展开、路径校验、大小上限、敏感文件黑名单 .env/.env.*/*.key/*.pem）✅
   · SkillManager.scan()：扫描 skills/，解析 frontmatter，过滤 status=active ✅
-  · SkillManager.build_snapshot()：包含字符预算三级降级（完整 → 紧凑 → 截断）✅
+  · SkillManager.build_snapshot()：包含字符预算三级降级（完整 → 紧凑 → 二分截断），保持最高优先级前缀不变并减少 prompt 重建次数 ✅
+  · build_snapshot mtime 缓存：未变更文件跳过重解析（Phase 16 / Step 12）✅
+  · read_skill_content()：使用 name 索引替代线性查找（Phase 16 / Step 19）✅
   · disable_model_invocation 过滤 + priority 排序 ✅
   · Skill Protocol 文本（基础 4 条 + 手动指定约定）✅
   · Protocol + SkillSnapshot.prompt 注入 system_prompt（create_agent）✅

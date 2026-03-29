@@ -15,6 +15,8 @@ SkillManager - Agent Skills 系统核心管理器.
 import threading
 from pathlib import Path
 
+import yaml  # type: ignore[import-untyped]
+
 from app.skills.models import (
     InvocationPolicy,
     SkillDefinition,
@@ -66,7 +68,12 @@ class SkillManager:
         self.skills_dir = Path(skills_dir).resolve()
         self._version: int = 0
         self._lock: threading.Lock = threading.Lock()
+        self._scan_lock: threading.Lock = threading.Lock()
         self._max_prompt_chars = max_prompt_chars or self.MAX_SKILLS_PROMPT_CHARS
+        self._definitions: list[SkillDefinition] = []
+        self._definitions_by_name: dict[str, SkillDefinition] = {}
+        self._scan_cache: dict[str, int] = {}
+        self._scan_result_cache: dict[str, SkillDefinition | None] = {}
 
     @classmethod
     def get_instance(
@@ -147,39 +154,71 @@ class SkillManager:
         Raises:
             无异常，解析失败的文件会被跳过
         """
-        definitions: list[SkillDefinition] = []
+        with self._scan_lock:
+            definitions: list[SkillDefinition] = []
+            definitions_by_name: dict[str, SkillDefinition] = {}
+            seen_files: set[str] = set()
 
-        # 遍历 skills_dir 下的所有子目录
-        for skill_dir in self.skills_dir.iterdir():
-            if not skill_dir.is_dir():
-                continue
-
-            # 查找 SKILL.md 文件
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
-
-            # 检查文件大小
-            try:
-                file_size = skill_file.stat().st_size
-                if file_size > self.MAX_SKILL_FILE_BYTES:
-                    # 跳过超大文件
+            # 遍历 skills_dir 下的所有子目录
+            for skill_dir in self.skills_dir.iterdir():
+                if not skill_dir.is_dir():
                     continue
-            except Exception:
-                # 无法获取文件大小，跳过该文件
-                continue
 
-            # 解析 SKILL.md
-            try:
-                definition = self._parse_skill_file(skill_file)
+                # 查找 SKILL.md 文件
+                skill_file = skill_dir / "SKILL.md"
+                if not skill_file.exists():
+                    continue
+
+                file_key = str(skill_file.resolve())
+                seen_files.add(file_key)
+
+                # 检查文件大小并读取 mtime（用于缓存命中）
+                try:
+                    stat = skill_file.stat()
+                    if stat.st_size > self.MAX_SKILL_FILE_BYTES:
+                        # 跳过超大文件，并缓存跳过结果（避免重复解析）
+                        self._scan_cache[file_key] = stat.st_mtime_ns
+                        self._scan_result_cache[file_key] = None
+                        continue
+                    mtime_ns = stat.st_mtime_ns
+                except Exception:
+                    # 无法获取文件元信息，跳过该文件
+                    self._scan_cache.pop(file_key, None)
+                    self._scan_result_cache.pop(file_key, None)
+                    continue
+
+                cached_mtime = self._scan_cache.get(file_key)
+                if cached_mtime == mtime_ns:
+                    cached_definition = self._scan_result_cache.get(file_key)
+                    if cached_definition and cached_definition.status == SkillStatus.ACTIVE:
+                        definitions.append(cached_definition)
+                        definitions_by_name.setdefault(
+                            cached_definition.name, cached_definition
+                        )
+                    continue
+
+                # 文件变更或首次扫描，重新解析
+                try:
+                    definition = self._parse_skill_file(skill_file)
+                except Exception:
+                    definition = None
+
+                self._scan_cache[file_key] = mtime_ns
+                self._scan_result_cache[file_key] = definition
+
                 if definition and definition.status == SkillStatus.ACTIVE:
                     definitions.append(definition)
-            except Exception:
-                # 解析失败，跳过该文件
-                continue
+                    definitions_by_name.setdefault(definition.name, definition)
 
-        self._definitions = definitions
-        return definitions
+            # 清理已删除文件的缓存
+            stale_files = set(self._scan_cache.keys()) - seen_files
+            for file_key in stale_files:
+                self._scan_cache.pop(file_key, None)
+                self._scan_result_cache.pop(file_key, None)
+
+            self._definitions = definitions
+            self._definitions_by_name = definitions_by_name
+            return definitions
 
     def _parse_skill_file(self, skill_file: Path) -> SkillDefinition | None:
         """
@@ -191,8 +230,6 @@ class SkillManager:
         Returns:
             SkillDefinition 对象，解析失败返回 None
         """
-        import yaml  # type: ignore[import-untyped]
-
         # 读取文件内容
         try:
             content = skill_file.read_text(encoding="utf-8")
@@ -392,8 +429,8 @@ class SkillManager:
         """
         移除优先级最低的 skills，确保总字符数在预算内.
 
-        使用紧凑格式（Level 2），从最低优先级开始逐步移除，
-        直到总字符数在预算内。
+        使用紧凑格式（Level 2），并基于“前缀长度越小，prompt 越短”的
+        单调性，对最高优先级前缀做二分搜索，找到预算内可容纳的最大数量。
 
         Args:
             definitions: SkillDefinition 列表（已按优先级降序排列）
@@ -401,32 +438,41 @@ class SkillManager:
         Returns:
             SkillEntry 列表（紧凑格式，可能移除了部分 skills）
         """
-        # 从全部 skills 开始，逐步移除优先级最低的
-        # definitions 已按优先级降序排列，所以从末尾开始移除
-        for count in range(len(definitions), 0, -1):
-            # 取前 count 个最高优先级的 skills
-            truncated_definitions = definitions[:count]
+        compact_entries = [
+            SkillEntry(
+                name=defn.name,
+                description="",  # 紧凑格式
+                file_path=self._shorten_path(defn.file_path),
+                tools=defn.tools,
+            )
+            for defn in definitions
+        ]
 
-            # 使用紧凑格式
-            entries = [
-                SkillEntry(
-                    name=defn.name,
-                    description="",  # 紧凑格式
-                    file_path=self._shorten_path(defn.file_path),
-                    tools=defn.tools,
-                )
-                for defn in truncated_definitions
-            ]
+        if not compact_entries:
+            return []
 
-            prompt = self._build_prompt(entries)
+        best_count = 0
+        low = 1
+        high = len(compact_entries)
+
+        # Prompt length is monotonic with respect to a prefix length of compact entries,
+        # so we can binary-search the largest prefix that still fits the budget.
+        while low <= high:
+            mid = (low + high) // 2
+            candidate_entries = compact_entries[:mid]
+            prompt = self._build_prompt(candidate_entries)
 
             if len(prompt) <= self._max_prompt_chars:
-                # 找到合适的数量，返回
-                return entries
+                best_count = mid
+                low = mid + 1
+            else:
+                high = mid - 1
 
-        # 如果即使只有一个 skill 也超限，返回空列表
-        # （这种情况理论上不应该发生，除非单个 skill 的 path 就超过预算）
-        return []
+        if best_count == 0:
+            # Even the highest-priority single skill does not fit in the compact form.
+            return []
+
+        return compact_entries[:best_count]
 
     def _build_entry_description(self, definition: SkillDefinition) -> str:
         """
@@ -520,22 +566,22 @@ class SkillManager:
         return "\n".join(lines)
 
     def read_skill_content(self, skill_name: str) -> str:
-        if not hasattr(self, "_definitions"):
-            self._definitions = []
-        if not self._definitions:
+        if not self._definitions_by_name:
             self.scan()
-        for defn in self._definitions:
-            if defn.name == skill_name:
-                skill_file = Path(defn.file_path)
-                if not skill_file.is_absolute():
-                    skill_file = self.skills_dir / skill_file.name
 
-                # Path boundary check: ensure resolved path is within skills_dir
-                resolved = skill_file.resolve()
-                if not resolved.is_relative_to(self.skills_dir):
-                    return f"Error: skill '{skill_name}' path '{resolved}' is outside skills directory '{self.skills_dir}'"
+        defn = self._definitions_by_name.get(skill_name)
+        if defn is not None:
+            skill_file = Path(defn.file_path)
+            if not skill_file.is_absolute():
+                skill_file = self.skills_dir / skill_file.name
 
-                if skill_file.exists():
-                    return skill_file.read_text(encoding="utf-8")
-        available = ", ".join(d.name for d in self._definitions)
+            # Path boundary check: ensure resolved path is within skills_dir
+            resolved = skill_file.resolve()
+            if not resolved.is_relative_to(self.skills_dir):
+                return f"Error: skill '{skill_name}' path '{resolved}' is outside skills directory '{self.skills_dir}'"
+
+            if skill_file.exists():
+                return skill_file.read_text(encoding="utf-8")
+
+        available = ", ".join(self._definitions_by_name.keys())
         return f"Error: skill '{skill_name}' not found. Available: [{available}]"

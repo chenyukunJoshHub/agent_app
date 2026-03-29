@@ -5,6 +5,13 @@ from collections import OrderedDict
 
 
 class IdempotencyStore:
+    """In-memory idempotency stub with LRU eviction.
+
+    This store only protects duplicate execution within the current Python
+    process. Keys are not persisted to PostgreSQL/checkpointer, so protection
+    is lost across backend restarts or across multiple workers.
+    """
+
     def __init__(self, max_size: int = 10_000) -> None:
         self._executed: OrderedDict[str, None] = OrderedDict()
         self._max_size = max_size

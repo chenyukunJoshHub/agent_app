@@ -493,7 +493,7 @@ LLM 调用 在 middleware 内部执行摘要，不需要自定义 summarize_node
 **节点二：HIL 中断确认 Prompt**（触发时机：Agent 即将执行不可逆操作）
 
 ```
-调用方   HumanInTheLoopMiddleware（自行开发）
+调用方   官方 HITL 语义（当前由 PolicyHITLMiddleware 生成 interrupt payload，/chat 负责桥接到前端）
 类型     非 LLM 调用，是生成给用户的确认消息模板
 
 消息模板：

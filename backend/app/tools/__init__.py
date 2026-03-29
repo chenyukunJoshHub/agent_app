@@ -11,14 +11,12 @@ from app.tools.policy import PolicyEngine
 from app.tools.readonly.skill_loader import activate_skill
 from app.tools.registry import build_tool_registry
 from app.tools.search import web_search
-from app.tools.send_email import send_email
 from app.tools.token import token_counter
 
 __all__ = [
     "fetch_url",
     "web_search",
     "read_file",
-    "send_email",
     "token_counter",
     "csv_analyze",
     "activate_skill",

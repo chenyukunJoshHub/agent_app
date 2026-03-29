@@ -723,6 +723,10 @@ SSE push: {
 
   确认 → POST /chat/resume { interrupt_id: "uuid-xxxx", action: "approve" }
   取消 → POST /chat/resume { interrupt_id: "uuid-xxxx", action: "reject"  }
+  可选增强：确认时可附带「本会话内不再询问此工具」标记
+    → 当前实现会把 grant 写入 PolicyEngine 的运行时内存
+    → 同一 backend 进程存活期间，后续同工具调用可直接跳过 HIL
+    → 该 grant 当前不持久化到 PostgreSQL；backend 重启后失效
 
 ─── Resume 阶段 ─────────────────────────────────────────────
 FastAPI /resume 接口
@@ -744,6 +748,11 @@ FastAPI /resume 接口
 checkpointer 的作用：
   resume 时从 interrupt 点继续，web_search 结果已在 state，不重新执行
   没有 checkpointer → resume 只能从头跑，前置工具全部重新执行
+
+当前实现边界：
+  HIL interrupt / checkpoint    → PostgreSQL 持久化，跨进程 / 跨重启可恢复
+  session grant（本会话放行）→ 仅进程内运行时状态，backend 重启后丢失
+  因此“恢复已暂停审批”和“记住本会话已放行”目前不是同一持久化等级
 
 SSE event 类型完整列表（含 HIL）：
   thought       LLM 推理文本（思考过程）

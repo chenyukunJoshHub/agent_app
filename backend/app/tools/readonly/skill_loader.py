@@ -24,13 +24,23 @@ def activate_skill(name: str) -> str:
     Raises:
         ValueError: 如果 SkillManager 单例未初始化（应该由 langchain_engine 初始化）
     """
+    if not isinstance(name, str) or not name.strip():
+        return "Error: skill name cannot be empty."
+
     try:
         skill_manager = SkillManager.get_instance()
     except ValueError as e:
         raise ValueError(f"SkillManager not initialized. Ensure Agent creation calls SkillManager.get_instance(skills_dir=...) first: {e}")
 
-    skill_manager.scan()
-    return skill_manager.read_skill_content(name)
+    try:
+        skill_manager.scan()
+    except Exception as e:  # noqa: BLE001
+        return f"Error: failed to scan skills directory: {e}"
+
+    try:
+        return skill_manager.read_skill_content(name)
+    except Exception as e:  # noqa: BLE001
+        return f"Error: failed to load skill '{name}': {e}"
 
 
 __all__ = ["activate_skill"]

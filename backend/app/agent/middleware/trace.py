@@ -11,6 +11,7 @@ from loguru import logger
 
 from app.agent.context import AgentContext
 from app.observability.trace_events import emit_trace_event
+from app.prompt.budget import DEFAULT_BUDGET
 
 
 class TraceMiddleware(AgentMiddleware):
@@ -19,6 +20,20 @@ class TraceMiddleware(AgentMiddleware):
 
     P0: Pushes events to SSE queue after_model hook.
     """
+
+    _EMAIL_ARG_KEYS = {"to", "cc", "bcc", "from", "email", "recipient"}
+    _SENSITIVE_ARG_KEYS = {
+        "body",
+        "content",
+        "password",
+        "secret",
+        "token",
+        "authorization",
+        "api_key",
+        "access_token",
+        "refresh_token",
+        "cookie",
+    }
 
     def __init__(self) -> None:
         """Initialize TraceMiddleware."""
@@ -74,6 +89,43 @@ class TraceMiddleware(AgentMiddleware):
                 logger.error(f"Failed to send SSE event: {e}")
         else:
             logger.debug(f"No SSE queue, skipping event: {event_type}")
+
+    @staticmethod
+    def _mask_email(value: str) -> str:
+        if "@" not in value:
+            return "***"
+        local, _, domain = value.partition("@")
+        if not local:
+            return f"***@{domain}"
+        return f"{local[0]}***@{domain}"
+
+    @classmethod
+    def _is_sensitive_key(cls, key: str) -> bool:
+        lowered = key.lower()
+        if lowered in cls._SENSITIVE_ARG_KEYS:
+            return True
+        return lowered.endswith(("_token", "_secret", "_key"))
+
+    @classmethod
+    def _sanitize_tool_args(cls, payload: Any, parent_key: str | None = None) -> Any:
+        key = (parent_key or "").lower()
+
+        if isinstance(payload, dict):
+            return {
+                k: cls._sanitize_tool_args(v, parent_key=k)
+                for k, v in payload.items()
+            }
+
+        if isinstance(payload, list):
+            return [cls._sanitize_tool_args(item, parent_key=parent_key) for item in payload]
+
+        if key in cls._EMAIL_ARG_KEYS and isinstance(payload, str):
+            return cls._mask_email(payload)
+
+        if cls._is_sensitive_key(key):
+            return "[REDACTED]"
+
+        return payload
 
     async def abefore_agent(
         self, state: Any, runtime: Any
@@ -139,10 +191,11 @@ class TraceMiddleware(AgentMiddleware):
             runtime: Agent runtime information
 
         Returns:
-            dict | None: State updates (None for trace middleware)
+            dict | None: State updates for token usage accumulation
         """
         sse_queue = self._get_sse_queue(runtime)
         logger.info(f"🧠 [Middleware] aafter_model — LLM 响应完成，分析输出内容...")
+        state_patch: dict[str, Any] = {}
 
         # Extract latest AI message for thought content
         messages = state.get("messages", [])
@@ -204,7 +257,7 @@ class TraceMiddleware(AgentMiddleware):
                             payload={
                                 "tool_name": tc.get("name", ""),
                                 "tool_call_id": tc.get("id", ""),
-                                "args": tc.get("args", {}),
+                                "args": self._sanitize_tool_args(tc.get("args", {})),
                             },
                         )
 
@@ -223,11 +276,11 @@ class TraceMiddleware(AgentMiddleware):
                     current_usage = state.get("_token_usage", 0)
                     current_usage += total_tokens
 
-                    # Update state with new total
-                    state["_token_usage"] = current_usage
+                    # Return a state patch instead of mutating input state in-place.
+                    state_patch["_token_usage"] = current_usage
 
-                    # Token budget (32K working budget)
-                    budget = 32000
+                    # Token budget from global prompt configuration.
+                    budget = DEFAULT_BUDGET.WORKING_BUDGET
                     remaining = budget - current_usage
 
                     await self._send_sse_event(
@@ -266,7 +319,7 @@ class TraceMiddleware(AgentMiddleware):
                 payload={"messages": 0},
             )
 
-        return None
+        return state_patch or None
 
     async def aafter_agent(
         self, state: Any, runtime: Any

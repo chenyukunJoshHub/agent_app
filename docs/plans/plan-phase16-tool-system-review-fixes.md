@@ -90,11 +90,11 @@
 **位置**: `backend/app/tools/policy.py:34-35`
 
 **测试用例**:
-- [ ] `grant_session()` 后 `decide()` 应返回 "allow"
-- [ ] `revoke_session()` 后 `decide()` 应恢复原始决策
-- [ ] 对 `effect_class="destructive"` 类工具 `grant_session()` 应被拒绝或立即撤销
-- [ ] `revoke_session()` 对未 grant 的工具不应抛出异常
-- [ ] `get_granted_tools()` 返回当前会话所有已 grant 的工具列表
+- [x] `grant_session()` 后 `decide()` 应返回 "allow"
+- [x] `revoke_session()` 后 `decide()` 应恢复原始决策
+- [x] 对 `effect_class="destructive"` 类工具 `grant_session()` 应被拒绝或立即撤销
+- [x] `revoke_session()` 对未 grant 的工具不应抛出异常
+- [x] `get_granted_tools()` 返回当前会话所有已 grant 的工具列表
 
 **实现步骤**:
 1. `PolicyEngine` 添加 `revoke_session(tool_name: str)` 方法
@@ -102,6 +102,11 @@
 3. 修改 `decide()` 方法：destructive 工具不使用 session grant
 4. 可选：添加 TTL 支持（grant 时记录时间戳，超时自动撤销）
 5. 更新 `tests/backend/unit/tools/test_policy_engine.py`
+
+**当前实现边界（2026-03-30）**:
+- `session grant/revoke` 已形成产品闭环，但授权状态仅保存在运行时 `PolicyEngine` 内存
+- 不持久化到 PostgreSQL / checkpointer；因此 backend 重启后 grant 会丢失
+- 当前阶段接受该边界，后续若要跨重启保留，再单独设计持久化策略
 
 **影响文件**:
 - `backend/app/tools/policy.py`（修改）
@@ -135,31 +140,128 @@
 
 **位置**: `backend/app/agent/langchain_engine.py:176-187`
 
-> **注意**: 这是架构层面最大的改动，需要自定义 ToolNode 包装器。
-> 若当前阶段实现复杂度过高，可先在架构文档中标注为存根，下一迭代实现。
+> **设计决策（2026-03-30 更新）**:
+> 基于 LangChain 官方 Python middleware / HITL 文档，优先采用 **middleware 接线**，
+> 不重写主 `create_agent(...)` 路径，也不自定义替换 LangGraph 默认 ToolNode。
+>
+> 原因：
+> 1. 官方 `AgentMiddleware` 已提供 `after_model` / `wrap_tool_call` 扩展点，足以承载管理层决策与执行层治理
+> 2. 官方 `HumanInTheLoopMiddleware` 本身就是在 `after_model` 中基于 `interrupt(...)` 暂停执行
+> 3. 当前项目已深度依赖 LangChain `create_agent` + middleware + checkpointer，继续沿这条主路线风险最低
+>
+> 结论：
+> - **PolicyEngine 接入点** = `after_model`
+> - **Idempotency / retry / error normalization 接入点** = `awrap_tool_call`
+> - **HIL 元数据桥接** = 读取 LangGraph `__interrupt__` payload，不再把自定义 HIL middleware 当作执行拦截器
+
+**推荐设计（严谨版，保持 LangChain 主路线）**:
+
+```text
+LLM 产出 AIMessage(tool_calls)
+  ↓
+PolicyHITLMiddleware.after_model
+  · 逐个 tool_call 读取 ToolMeta
+  · PolicyEngine.decide(...) → allow / ask / deny
+  · deny  : 从 AIMessage.tool_calls 移除，并注入 error ToolMessage
+  · ask   : 基于 LangGraph interrupt(...) 触发官方 HIL 暂停
+  · allow : 保留 tool_call，进入工具执行节点
+  ↓
+ToolExecutionMiddleware.awrap_tool_call
+  · ToolManager.get_meta(...)
+  · idempotent 工具先 check_and_mark()
+  · 已执行过 → 返回 skipped ToolMessage
+  · 未执行过 → 按 ToolMeta.retry/backoff 调 handler(request)
+  · 异常 → 统一归一为 ToolMessage(error)
+  ↓
+真实 BaseTool 执行
+```
 
 **测试用例**:
-- [ ] deny 决策的工具调用应返回错误消息
-- [ ] ask 决策的工具调用应触发 HIL（通过 SSE 推送 hil_interrupt 事件）
-- [ ] allow 决策的工具调用应正常执行
-- [ ] 执行前应检查 `IdempotencyStore`
-- [ ] 已 revoke 的工具不应被 session grant 缓存影响
+- [x] deny 决策的工具调用应返回错误消息
+- [x] ask 决策的工具调用应触发 LangGraph interrupt，并在 SSE 中带出真实 `tool_name` / `args`
+- [x] allow 决策的工具调用应正常执行
+- [x] 执行前应检查 `IdempotencyStore`
+- [x] 已 revoke 的工具不应被 session grant 缓存影响
+- [x] `grant_session()` 后同一工具本轮应立即从 ask 变为 allow（无需重建 agent）
+- [x] 多个 tool_call 混合批次中，deny 不应阻断 allow；ask 应只暂停需要审批的调用
+- [x] reject 后应注入 error ToolMessage，且写工具副作用不执行
+- [x] 多 action HIL interrupt 的 SSE payload 应完整暴露 `action_requests`，前端不可只展示首个工具
+- [x] 过期 interrupt 不应继续被 `/chat/resume` 恢复
+- [x] `/chat/resume` 执行失败后 interrupt 状态应回滚到 `pending`
+- [x] 移动端应有 session grant 撤销入口，不能只依赖右侧 ContextPanel
 
 **实现步骤**:
-1. 创建 `backend/app/agent/policy_tool_node.py` — PolicyEnforcedToolNode
-2. 在 LangGraph workflow 中替换默认 ToolNode
-3. 集成 PolicyEngine.decide() + ToolManager.get_meta() + IdempotencyStore.check_and_mark()
-4. deny → 返回 ToolMessage(error)
-5. ask → 触发 HIL 中断（SSE hil_interrupt 事件）
-6. 允许 → 正常执行工具
-7. 新建 `tests/backend/unit/agent/test_policy_tool_node.py`
+1. 创建 `backend/app/agent/middleware/tool_policy.py`
+   - `PolicyHITLMiddleware(AgentMiddleware)`
+   - 在 `after_model()` 中扫描最后一个 `AIMessage.tool_calls`
+   - 对每个调用执行 `ToolManager.get_meta()` + `PolicyEngine.decide()`
+2. `after_model()` 的具体行为
+   - `deny`:
+     - 从待执行 `tool_calls` 中移除该调用
+     - 追加 `ToolMessage(status="error")`
+     - 记录 trace_event：`policy_decision=deny`
+   - `ask`:
+     - 构造 LangChain HITL request
+     - 调用 LangGraph `interrupt(...)`
+     - 由 checkpointer 原生持久化断点
+   - `allow`:
+     - 保留原始 tool_call
+3. 创建 `backend/app/agent/middleware/tool_execution.py`
+   - `ToolExecutionMiddleware(AgentMiddleware)`
+   - 在 `awrap_tool_call()` 中实现：
+     - idempotent 工具的 `IdempotencyStore.check_and_mark()`
+     - 基于 `ToolMeta.max_retries/backoff` 的有限重试
+     - 异常归一为 `ToolMessage(error)`
+4. 修改 `backend/app/agent/langchain_engine.py`
+   - 不再丢弃 `tool_manager` / `policy_engine`
+   - 将两者注入 `PolicyHITLMiddleware` / `ToolExecutionMiddleware`
+   - 保持 `create_agent(...)` + middleware 架构不变
+5. 调整 HIL 接线
+   - 删除旧 `HILMiddleware` 残留实现
+   - `/chat/resume` 直接使用 chat 层 helper 处理 interrupt 状态更新与前端事件桥接
+   - `/chat` 的 `__interrupt__` 处理改为直接解析 interrupt payload 中的 `action_requests`
+   - SSE `hil_interrupt` 事件应包含真实 `tool_name` / `args` / `allowed_decisions`
+6. 调整 `/chat/resume`
+   - 继续使用 `Command(resume=...)` 恢复
+   - 优先从 interrupt payload / checkpoint 恢复工具元数据
+   - `send_email` 等非幂等写工具继续保留 resume-time dedupe guard
+7. 新建测试
+   - `tests/backend/unit/agent/test_tool_policy_middleware.py`
+   - `tests/backend/unit/agent/test_tool_execution_middleware.py`
+   - 必要时补 `tests/backend/integration/test_chat_hil_policy_path.py`
 
 **影响文件**:
-- `backend/app/agent/policy_tool_node.py`（新建）
-- `backend/app/agent/langchain_engine.py`（修改 — 接入 PolicyEnforcedToolNode）
-- `tests/backend/unit/agent/test_policy_tool_node.py`（新建）
+- `backend/app/agent/middleware/tool_policy.py`（新建）
+- `backend/app/agent/middleware/tool_execution.py`（新建）
+- `backend/app/agent/langchain_engine.py`（修改 — 保留并注入 ToolManager / PolicyEngine）
+- `backend/app/api/chat.py`（修改 — 解析真实 interrupt payload，发 enriched HIL SSE）
+- `backend/app/agent/middleware/hil.py`（删除 — 旧 HIL 残留逻辑并入 chat 层 helper）
+- `backend/app/observability/interrupt_store.py`（修改 — interrupt 过期校验）
+- `tests/backend/unit/agent/test_tool_policy_middleware.py`（新建）
+- `tests/backend/unit/agent/test_tool_execution_middleware.py`（新建）
+- `tests/backend/unit/observability/test_interrupt_store.py`（新建）
+- `frontend/src/components/ConfirmModal.tsx`（修改 — 多 action 审批视图 + grant 限制）
+- `frontend/src/components/SessionGrantStrip.tsx`（新建 — 移动端 revoke 入口）
+- `tests/components/ConfirmModal.test.tsx`（修改）
+- `tests/components/SessionGrantStrip.test.tsx`（新建）
 
 **依赖**: Step 2（SEC-002）、Step 3（SEC-001）需先完成
+
+**中间件顺序（建议）**:
+1. `MemoryMiddleware`
+2. `SummarizationMiddleware`
+3. `TraceMiddleware`
+4. `PolicyHITLMiddleware`
+5. `ToolExecutionMiddleware`
+
+说明：
+- 官方文档说明 `after_model` 按 **逆序** 执行，因此 `TraceMiddleware` 放在 `PolicyHITLMiddleware` 前面，才能看到“策略修正后的 tool_calls”
+- `wrap_tool_call` 按 **列表顺序嵌套**，`ToolExecutionMiddleware` 放在最后即可最贴近真实工具执行
+
+**为何不选自定义 ToolNode**:
+- 会偏离 LangChain `create_agent` 默认图结构，后续升级 LangChain / LangGraph 时维护成本更高
+- 当前需求本质是“治理与拦截”，官方 middleware 已提供一等支持
+- 只有在未来确实需要 DAG 批调度 / 跨工具依赖图 / 自定义并发批次时，才值得下沉到 ToolNode / Graph 层
 
 ---
 
@@ -305,26 +407,26 @@
 **测试用例清单**:
 
 #### TEST-003 — PolicyEngine 补充测试
-- [ ] grant 对 deny 的覆盖行为测试
-- [ ] grant 后 `hil_required` 变化测试
-- [ ] 多次 grant 同一工具的幂等性
+- [x] grant 对 deny 的覆盖行为测试
+- [x] grant 后 `hil_required` 变化测试
+- [x] 多次 grant 同一工具的幂等性
 
 #### TEST-004 — ToolManager get_meta 返回副本
-- [ ] 修改返回的 ToolMeta 不影响内部存储
-- [ ] 返回的 ToolMeta 与内部存储值相等
+- [x] 修改返回的 ToolMeta 不影响内部存储
+- [x] 返回的 ToolMeta 与内部存储值相等
 
 #### TEST-005 — activate_skill 隔离修复
-- [ ] fixture 注入预配置 SkillManager
-- [ ] monkeypatch mock `get_instance`
+- [x] fixture 注入预配置 SkillManager
+- [x] monkeypatch mock `get_instance`
 
 #### TEST-006 — activate_skill 错误路径
-- [ ] `scan()` 异常时的行为
-- [ ] 目录不存在时的行为
-- [ ] 空 name 参数时的行为
+- [x] `scan()` 异常时的行为
+- [x] 目录不存在时的行为
+- [x] 空 name 参数时的行为
 
 #### TEST-010 — PolicyEngine × ToolManager 集成测试
-- [ ] 遍历所有注册工具，验证 `decide()` 不抛出 ValueError
-- [ ] 验证每个工具的 `effect_class` 对应正确的默认决策
+- [x] 遍历所有注册工具，验证 `decide()` 不抛出 ValueError
+- [x] 验证每个工具的 `effect_class` 对应正确的默认决策
 
 **影响文件**:
 - `tests/backend/unit/tools/test_policy_engine.py`（修改）
@@ -341,8 +443,8 @@
 **位置**: `backend/app/tools/send_email.py:40`, `backend/app/agent/middleware/trace.py:173`
 
 **实现**:
-- 日志中脱敏邮件地址（`u***@example.com`）
-- SSE 事件中过滤敏感工具参数
+- [x] 日志中脱敏邮件地址（`u***@example.com`）
+- [x] SSE 事件中过滤敏感工具参数
 
 ---
 
@@ -351,7 +453,7 @@
 **位置**: `backend/app/tools/file.py:37`
 
 **实现**:
-- 补充 `.env`、`.env.*`、`*.key`、`*.pem` 到黑名单
+- [x] 补充 `.env`、`.env.*`、`*.key`、`*.pem` 到黑名单
 - 或改为白名单策略
 
 ---
@@ -371,7 +473,7 @@
 **位置**: `backend/app/skills/manager.py:336-387`
 
 **实现**:
-- 将线性尝试替换为二分搜索，找到最大可容纳的 skill 数量
+- [x] 将线性尝试替换为二分搜索，找到最大可容纳的 skill 数量
 
 ---
 
@@ -380,7 +482,7 @@
 **位置**: `backend/app/skills/manager.py:194`
 
 **实现**:
-- `import yaml` 移至文件顶部
+- [x] `import yaml` 移至文件顶部
 
 ---
 
@@ -389,8 +491,8 @@
 **位置**: `backend/app/skills/manager.py:522-535`
 
 **实现**:
-- `scan()` 时构建 `dict[str, SkillDefinition]` 索引
-- `read_skill_content()` 使用索引查找替代线性搜索
+- [x] `scan()` 时构建 `dict[str, SkillDefinition]` 索引
+- [x] `read_skill_content()` 使用索引查找替代线性搜索
 
 ---
 
@@ -419,7 +521,7 @@
 
 **实现**:
 - 将工具文件迁移至 `readonly/`、`write/`、`orchestration/` 子目录
-- 或更新架构文档以反映当前结构
+- [x] 或更新架构文档以反映当前结构
 
 ---
 
@@ -437,7 +539,7 @@
 **位置**: `backend/app/tools/idempotency.py`
 
 **实现**:
-- 在类文档字符串中标注为内存存根
+- [x] 在类文档字符串中标注为内存存根
 - 或接入 PostgreSQL checkpointer
 
 ---
@@ -447,8 +549,8 @@
 **位置**: `backend/app/tools/__init__.py:14`
 
 **实现**:
-- 从 `__init__.py` 移除 `send_email` 导入
-- 调用方直接导入
+- [x] 从 `__init__.py` 移除 `send_email` 导入
+- [x] 调用方直接导入
 
 ---
 
@@ -457,7 +559,7 @@
 **位置**: `backend/app/tools/base.py:16`
 
 **实现**:
-- 定义 `BackoffConfig(TypedDict)` 替代裸 `dict`
+- [x] 定义 `BackoffConfig(TypedDict)` 替代裸 `dict`
 
 ---
 
@@ -466,9 +568,9 @@
 **位置**: `tests/backend/unit/tools/test_build_tool_registry.py`
 
 **测试用例**:
-- [ ] 导入失败时的错误处理
-- [ ] 多次调用 build_tool_registry 的幂等性
-- [ ] BaseTool 实例类型验证
+- [x] 导入失败时的错误处理
+- [x] 多次调用 build_tool_registry 的幂等性
+- [x] BaseTool 实例类型验证
 
 ---
 
@@ -493,8 +595,8 @@
 - [ ] 覆盖率 ≥ 80%
 
 ### Phase 16.3 完成标准
-- [ ] PII 脱敏实现
-- [ ] 路径黑名单补充
+- [x] PII 脱敏实现
+- [x] 路径黑名单补充
 - [ ] 输入校验实现
 - [ ] 所有性能优化完成
 - [ ] 架构标注和文档更新

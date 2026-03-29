@@ -10,6 +10,15 @@ from langchain_core.tools import tool
 from loguru import logger
 
 
+def _mask_email(value: str) -> str:
+    if "@" not in value:
+        return "***"
+    local, _, domain = value.partition("@")
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
 @tool
 def send_email(to: str, subject: str, body: str) -> str:
     """
@@ -37,7 +46,7 @@ def send_email(to: str, subject: str, body: str) -> str:
     Returns:
         str: 发送结果，包含时间戳和模拟邮件ID
     """
-    logger.info(f"Mock email to {to}: {subject}")
+    logger.info("Mock email to {} (subject chars={})", _mask_email(to), len(subject))
 
     # Simulate email sending
     timestamp = datetime.now(UTC).isoformat()

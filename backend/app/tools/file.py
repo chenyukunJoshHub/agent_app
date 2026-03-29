@@ -33,6 +33,14 @@ BLOCKED_MIME_TYPES = {
     'application/gzip',
 }
 
+# Blocked sensitive file name patterns
+BLOCKED_FILE_PATTERNS = (
+    ".env",
+    ".env.*",
+    "*.key",
+    "*.pem",
+)
+
 
 def _get_workspace() -> Path:
     """Return the configured workspace root, falling back to _DEFAULT_WORKSPACE."""
@@ -130,6 +138,20 @@ def _validate_path(path: str) -> Path:
             raise
         # Path is not under home directory, which is fine
         pass
+
+    # Block common secret file patterns
+    filename = expanded.name.lower()
+    is_blocked_secret_file = (
+        filename == ".env"
+        or filename.startswith(".env.")
+        or filename.endswith(".key")
+        or filename.endswith(".pem")
+    )
+    if is_blocked_secret_file:
+        logger.error(f"Access to sensitive file pattern blocked: {path}")
+        raise ValueError(
+            "Access denied: sensitive file pattern (.env/.env.*/*.key/*.pem) is not allowed"
+        )
 
     # Verify the path actually exists and is a file
     if not expanded.is_file():

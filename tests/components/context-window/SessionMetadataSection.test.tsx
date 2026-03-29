@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { SessionMetadataSection } from '@/components/context/SessionMetadataSection';
 import type { SessionMeta, StateMessage } from '@/types/context-window';
 import { EMPTY_CONTEXT_DATA } from '@/types/context-window';
@@ -124,5 +125,27 @@ describe('SessionMetadataSection', () => {
     );
     const usageEl = container.querySelector('[data-testid="usage-rate"]');
     expect(usageEl?.className).toMatch(/text-warning-text/);
+  });
+
+  it('应展示本会话已放行工具并支持撤销', async () => {
+    const user = userEvent.setup();
+    const onRevokeTool = vi.fn();
+
+    render(
+      <SessionMetadataSection
+        sessionMeta={mockMeta}
+        budget={EMPTY_CONTEXT_DATA.budget}
+        stateMessages={[]}
+        lastActivityTime={null}
+        sessionGrants={['send_email']}
+        onRevokeTool={onRevokeTool}
+      />
+    );
+
+    expect(screen.getByText('本会话已放行')).toBeInTheDocument();
+    expect(screen.getByText('send_email')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '撤销 send_email 会话放行' }));
+    expect(onRevokeTool).toHaveBeenCalledWith('send_email');
   });
 });

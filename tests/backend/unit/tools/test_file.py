@@ -360,6 +360,24 @@ class TestReadFileSecurity:
 
         assert "Access denied" in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        "filename",
+        [".env", ".env.local", "private.key", "cert.pem"],
+    )
+    def test_read_file_blocks_sensitive_secret_file_patterns(self, filename: str) -> None:
+        """Test that common secret file patterns are blocked."""
+        from app.tools.file import read_file
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, filename)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("secret")
+
+            with pytest.raises(ValueError) as exc_info:
+                read_file.invoke({"path": file_path})
+
+            assert "Access denied" in str(exc_info.value)
+
     def test_read_file_allows_normal_files(self) -> None:
         """Test that normal files are allowed."""
         from app.tools.file import read_file

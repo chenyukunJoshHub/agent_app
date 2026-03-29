@@ -54,6 +54,12 @@ export interface InterruptData {
   tool_args: Record<string, unknown>;
   risk_level: 'high' | 'medium' | 'low';
   message: string;
+  action_requests?: Array<{
+    name: string;
+    args: Record<string, unknown>;
+    description?: string;
+  }>;
+  grant_session_supported?: boolean;
 }
 
 interface UseSSEHandlersOptions {

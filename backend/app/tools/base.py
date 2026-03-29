@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable, Literal, TypedDict
+
+
+class BackoffConfig(TypedDict):
+    strategy: Literal["fixed", "exponential"]
+    base_seconds: float
 
 
 @dataclass
@@ -10,10 +15,10 @@ class ToolMeta:
     requires_hil: bool = False
     allowed_decisions: list[str] = field(default_factory=list)
     idempotent: bool = True
-    idempotency_key_fn: Callable | None = None
+    idempotency_key_fn: Callable[[dict[str, Any]], str | None] | None = None
     max_retries: int = 0
     timeout_seconds: int = 30
-    backoff: dict | None = None
+    backoff: BackoffConfig | None = None
     can_parallelize: bool = True
     concurrency_group: str | None = None
     permission_key: str = ""
@@ -24,4 +29,4 @@ class ToolMeta:
             self.max_retries = 0
 
 
-__all__ = ["ToolMeta"]
+__all__ = ["BackoffConfig", "ToolMeta"]

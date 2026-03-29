@@ -19,11 +19,17 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.context import AgentContext
-from app.agent.langchain_engine import create_react_agent
+from app.agent.langchain_engine import (
+    create_react_agent,
+    get_session_granted_tools,
+    grant_session_tool_access,
+    revoke_session_tool_access,
+)
 from app.config import settings
 from app.db.postgres import get_store
 from app.logger import ApiLogger, SseLogger, ToolsLogger
 from app.observability.trace_events import emit_trace_event
+from app.observability.interrupt_store import get_interrupt_store
 from app.planner.orchestrator import TaskPlanner, TaskRuntimeStore
 from app.skills.manager import SkillManager
 from app.tools.idempotency import IdempotencyStore
@@ -47,6 +53,18 @@ class ChatResumeRequest(BaseModel):
     user_id: str = Field(default="dev_user", description="User identifier")
     interrupt_id: str = Field(..., description="Interrupt identifier to resume")
     approved: bool = Field(..., description="Whether user approved the action")
+    grant_session: bool = Field(
+        default=False,
+        description="Whether to allow this tool for the rest of the current session",
+    )
+
+
+class SessionGrantRequest(BaseModel):
+    """Request model for session-scoped tool grants."""
+
+    session_id: str = Field(..., description="Session identifier")
+    user_id: str = Field(default="dev_user", description="User identifier")
+    tool_name: str = Field(..., description="Tool name")
 
 
 # SSE Event Queue
@@ -142,18 +160,175 @@ def _build_hil_resume_command(
     interrupt_id: str,
     approved: bool,
     tool_name: str,
+    decision_count: int = 1,
 ) -> Command:
     """Build LangGraph Command payload for HITL resume decision."""
-    decision: dict[str, Any]
+    effective_count = max(1, decision_count)
+    decisions: list[dict[str, Any]]
     if approved:
-        decision = {"type": "approve"}
+        decisions = [{"type": "approve"} for _ in range(effective_count)]
     else:
-        decision = {
-            "type": "reject",
-            "message": f"用户拒绝执行 {tool_name} 操作",
-        }
+        decisions = [
+            {
+                "type": "reject",
+                "message": f"用户拒绝执行 {tool_name} 操作",
+            }
+            for _ in range(effective_count)
+        ]
     # Use interrupt-id keyed mapping to be explicit and future-proof for multi-interrupt scenarios.
-    return Command(resume={interrupt_id: {"decisions": [decision]}})
+    return Command(resume={interrupt_id: {"decisions": decisions}})
+
+
+def _infer_hil_risk_level(tool_name: str) -> str:
+    """Map tool meta to coarse UI risk levels."""
+    try:
+        tool_manager = _get_resume_tool_manager()
+        meta = tool_manager.get_meta(tool_name)
+        if meta is None:
+            return "medium"
+        if meta.effect_class in {"external_write", "destructive"}:
+            return "high"
+        if meta.effect_class == "write":
+            return "medium"
+    except Exception:
+        return "medium"
+    return "low"
+
+
+def _infer_hil_risk_level_for_actions(action_requests: list[dict[str, Any]]) -> str:
+    """Use the highest risk level across all interrupted actions."""
+    if not action_requests:
+        return "medium"
+    priorities = {"low": 0, "medium": 1, "high": 2}
+    current = "low"
+    for action in action_requests:
+        level = _infer_hil_risk_level(str(action.get("name", "unknown")))
+        if priorities[level] > priorities[current]:
+            current = level
+    return current
+
+
+def _build_hil_message(action_requests: list[dict[str, Any]]) -> str:
+    """Prefer the action description for single-action interrupts, summarize batches."""
+    if not action_requests:
+        return "Tool execution requires approval"
+    if len(action_requests) == 1:
+        return str(action_requests[0].get("description") or "Tool execution requires approval")
+    return f"Agent 准备执行 {len(action_requests)} 个需审批操作，请确认"
+
+
+def _get_grantable_tool_name(interrupt_data: dict[str, Any]) -> str | None:
+    """
+    Session grant is only well-defined when all interrupted actions target the same tool.
+    """
+    action_requests = interrupt_data.get("action_requests", []) or []
+    tool_names = {
+        str(action.get("name"))
+        for action in action_requests
+        if isinstance(action, dict) and action.get("name")
+    }
+    if tool_names:
+        return next(iter(tool_names)) if len(tool_names) == 1 else None
+
+    tool_name = interrupt_data.get("tool_name")
+    if isinstance(tool_name, str) and tool_name:
+        return tool_name
+    return None
+
+
+def _extract_hil_interrupt_payload(interrupts: tuple[Any, ...]) -> dict[str, Any]:
+    """Normalize LangGraph interrupt payload for SSE/UI and persistence."""
+    interrupt = interrupts[0] if interrupts else None
+    if interrupt is None:
+        return {
+            "interrupt_id": "unknown",
+            "tool_name": "unknown",
+            "tool_args": {},
+            "risk_level": "medium",
+            "message": "Tool execution requires approval",
+            "allowed_decisions": [],
+            "action_requests": [],
+            "review_configs": [],
+            "grant_session_supported": False,
+        }
+
+    raw_value = getattr(interrupt, "value", {}) or {}
+    action_requests = raw_value.get("action_requests", []) if isinstance(raw_value, dict) else []
+    review_configs = raw_value.get("review_configs", []) if isinstance(raw_value, dict) else []
+    first_action = action_requests[0] if action_requests else {}
+    first_review = review_configs[0] if review_configs else {}
+
+    return {
+        "interrupt_id": getattr(interrupt, "id", "unknown"),
+        "tool_name": first_action.get("name", "unknown"),
+        "tool_args": first_action.get("args", {}),
+        "risk_level": _infer_hil_risk_level_for_actions(action_requests),
+        "message": _build_hil_message(action_requests),
+        "allowed_decisions": first_review.get("allowed_decisions", []),
+        "action_requests": action_requests,
+        "review_configs": review_configs,
+        "grant_session_supported": _get_grantable_tool_name(
+            {"tool_name": first_action.get("name"), "action_requests": action_requests}
+        )
+        is not None,
+    }
+
+
+async def _persist_hil_interrupt(
+    session_id: str | None,
+    interrupt_payload: dict[str, Any],
+) -> None:
+    """Persist LangGraph interrupt metadata for /chat/resume lookup."""
+    if not session_id:
+        return
+
+    interrupt_store = await get_interrupt_store()
+    await interrupt_store.save_interrupt(
+        session_id=session_id,
+        tool_name=interrupt_payload.get("tool_name", "unknown"),
+        tool_args=interrupt_payload.get("tool_args", {}),
+        interrupt_id=interrupt_payload.get("interrupt_id"),
+        allowed_decisions=interrupt_payload.get("allowed_decisions", []),
+        action_requests=interrupt_payload.get("action_requests", []),
+        review_configs=interrupt_payload.get("review_configs", []),
+    )
+
+
+async def _resolve_hil_resume_decision(
+    interrupt_id: str,
+    approved: bool,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    event_queue: Any,
+) -> dict[str, Any]:
+    """Update persisted interrupt state and build the user-facing resolution payload."""
+    if approved:
+        logger.info(f"User approved interrupt {interrupt_id} for tool {tool_name}")
+        await emit_trace_event(
+            event_queue,
+            stage="hil",
+            step="resume_approved",
+            payload={"interrupt_id": interrupt_id, "tool_name": tool_name},
+        )
+        return {
+            "success": True,
+            "message": f"已批准执行 {tool_name} 操作",
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+        }
+
+    logger.info(f"User rejected interrupt {interrupt_id} for tool {tool_name}")
+    await emit_trace_event(
+        event_queue,
+        stage="hil",
+        step="resume_rejected",
+        payload={"interrupt_id": interrupt_id, "tool_name": tool_name},
+    )
+    return {
+        "success": True,
+        "message": f"已取消 {tool_name} 操作",
+        "tool_name": tool_name,
+    }
 
 
 def _plan_to_payload(plan: Any) -> dict[str, Any]:
@@ -705,15 +880,17 @@ async def _execute_agent(
                             # Fix B: update is tuple[Interrupt], not a dict
                             # Interrupt.id is the stable identifier (LangGraph >= 0.6)
                             interrupts = update  # tuple[Interrupt, ...]
-                            interrupt_id = interrupts[0].id if interrupts else "unknown"
+                            interrupt_payload = _extract_hil_interrupt_payload(interrupts)
+                            interrupt_id = interrupt_payload["interrupt_id"]
+                            await _persist_hil_interrupt(active_session_id, interrupt_payload)
 
                             logger.warning(
                                 f"⏸️ [Agent] HIL 中断触发，等待用户确认，interrupt_id={interrupt_id}"
                             )
                             sse_logger.sse_event_hil_interrupt(
                                 interrupt_id=interrupt_id,
-                                tool_name="unknown",
-                                tool_args={},
+                                tool_name=interrupt_payload["tool_name"],
+                                tool_args=interrupt_payload["tool_args"],
                             )
 
                             # Push hil_interrupt event
@@ -722,8 +899,13 @@ async def _execute_agent(
                                     "hil_interrupt",
                                     {
                                         "interrupt_id": interrupt_id,
-                                        "tool_name": "unknown",
-                                        "tool_args": {},
+                                        "tool_name": interrupt_payload["tool_name"],
+                                        "tool_args": interrupt_payload["tool_args"],
+                                        "risk_level": interrupt_payload["risk_level"],
+                                        "message": interrupt_payload["message"],
+                                        "allowed_decisions": interrupt_payload["allowed_decisions"],
+                                        "action_requests": interrupt_payload["action_requests"],
+                                        "grant_session_supported": interrupt_payload["grant_session_supported"],
                                     },
                                 )
                             )
@@ -938,6 +1120,27 @@ async def chat(
     )
 
 
+@router.get("/session-grants")
+async def chat_session_grants(session_id: str) -> dict[str, Any]:
+    """Return the currently granted tools for a session."""
+    return {
+        "session_id": session_id,
+        "granted_tools": await get_session_granted_tools(session_id),
+    }
+
+
+@router.post("/session-grants/revoke")
+async def revoke_chat_session_grant(request: SessionGrantRequest) -> dict[str, Any]:
+    """Revoke a previously granted tool permission for the current session."""
+    granted_tools = await revoke_session_tool_access(request.session_id, request.tool_name)
+    return {
+        "success": True,
+        "session_id": request.session_id,
+        "revoked_tool": request.tool_name,
+        "granted_tools": granted_tools,
+    }
+
+
 @router.post("/resume")
 async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
     """
@@ -955,12 +1158,12 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
         f"Resume request: interrupt={request.interrupt_id}, approved={request.approved}"
     )
 
-    # Import here to avoid circular dependency
-    from app.agent.middleware.hil import HILMiddleware
-    from app.observability.interrupt_store import get_interrupt_store
+    # Keep runtime lookup local so tests and alternate store implementations can patch
+    # app.observability.interrupt_store.get_interrupt_store directly.
+    from app.observability.interrupt_store import get_interrupt_store as get_interrupt_store_for_resume
 
     # Get interrupt store
-    interrupt_store = await get_interrupt_store()
+    interrupt_store = await get_interrupt_store_for_resume()
 
     # Get interrupt data
     interrupt_data = await interrupt_store.get_interrupt(request.interrupt_id)
@@ -993,28 +1196,45 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    # Create HIL middleware instance to handle resume
     event_queue = SSEEventQueue()
-    hil_middleware = HILMiddleware(
-        interrupt_store=interrupt_store,
-        interrupt_on={interrupt_data.get("tool_name", ""): True},
+    config = {"configurable": {"thread_id": request.session_id}}
+    tool_name = interrupt_data.get("tool_name", "")
+    tool_args = interrupt_data.get("tool_args", {})
+    result = await _resolve_hil_resume_decision(
+        interrupt_id=request.interrupt_id,
+        approved=request.approved,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        event_queue=event_queue,
     )
 
-    # Handle resume decision (sse_queue passed explicitly, not via constructor)
-    result = await hil_middleware.handle_resume_decision(
-        request.interrupt_id, request.approved, sse_queue=event_queue
-    )
+    agent = None
+    if request.approved and request.grant_session:
+        grantable_tool_name = _get_grantable_tool_name(interrupt_data)
+        if grantable_tool_name:
+            agent = await create_react_agent(sse_queue=event_queue, config=config)
+            result["granted_tools"] = await grant_session_tool_access(
+                request.session_id,
+                grantable_tool_name,
+            )
+        else:
+            logger.warning(
+                f"Skip session grant for interrupt {request.interrupt_id}: multiple tool names"
+            )
+
+    await interrupt_store.update_interrupt_status(request.interrupt_id, "processing")
 
     # Native resume path: recover from checkpoint and continue agent execution
     async def resume_stream() -> AsyncIterator[str]:
+        terminal_status = "confirmed" if request.approved else "rejected"
+        terminal_marked = False
+        saw_error = False
+
         # Always emit resolution event first
         yield await _format_sse_event("hil_resolved", result)
         while not event_queue.empty():
             event_type, event_data = event_queue.get_nowait()
             yield await _format_sse_event(event_type, event_data)
-
-        tool_name = interrupt_data.get("tool_name", "")
-        tool_args = interrupt_data.get("tool_args", {})
 
         # Keep write-side-effect dedupe guard for send_email resume replay.
         idempotency_key: str | None = None
@@ -1051,6 +1271,10 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
                         "finish_reason": "approved",
                     },
                 )
+                await interrupt_store.update_interrupt_status(
+                    request.interrupt_id,
+                    terminal_status,
+                )
                 return
 
         # Build native LangGraph resume command.
@@ -1058,20 +1282,20 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
             interrupt_id=request.interrupt_id,
             approved=request.approved,
             tool_name=tool_name,
+            decision_count=len(interrupt_data.get("action_requests", []) or []),
         )
 
-        config = {"configurable": {"thread_id": request.session_id}}
         tools_logger = ToolsLogger(
             session_id=request.session_id,
             user_id=request.user_id,
             thread_id=request.session_id,
         )
         sse_logger = SseLogger(session_id=request.session_id, user_id=request.user_id)
-        agent = await create_react_agent(sse_queue=event_queue, config=config)
+        runtime_agent = agent or await create_react_agent(sse_queue=event_queue, config=config)
 
         agent_task = asyncio.create_task(
             _execute_agent(
-                agent=agent,
+                agent=runtime_agent,
                 message=f"[HIL_RESUME] {tool_name}",
                 config=config,
                 event_queue=event_queue,
@@ -1089,11 +1313,27 @@ async def chat_resume(request: ChatResumeRequest) -> StreamingResponse:
                 # If resume execution failed after optimistic mark, rollback idempotency.
                 if event_type == "error" and idempotency_key:
                     _RESUME_IDEMPOTENCY_STORE.discard(idempotency_key)
+                if event_type == "error":
+                    saw_error = True
+                    await interrupt_store.update_interrupt_status(request.interrupt_id, "pending")
+                elif event_type in ("done", "hil_interrupt") and not terminal_marked:
+                    await interrupt_store.update_interrupt_status(
+                        request.interrupt_id,
+                        terminal_status,
+                    )
+                    terminal_marked = True
 
                 yield await _format_sse_event(event_type, event_data)
 
                 if event_type in ("done", "error"):
                     break
+            if (
+                not saw_error
+                and not terminal_marked
+                and agent_task.done()
+                and not agent_task.cancelled()
+            ):
+                await interrupt_store.update_interrupt_status(request.interrupt_id, terminal_status)
         finally:
             if not agent_task.done():
                 agent_task.cancel()

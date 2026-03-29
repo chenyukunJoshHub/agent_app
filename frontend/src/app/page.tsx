@@ -12,7 +12,8 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { ContextPanel } from '@/components/ContextPanel';
 import { ExecutionTracePanel } from '@/components/ExecutionTracePanel';
 import { MessageList } from '@/components/MessageList';
-import { getChatResumeUrl } from '@/lib/api-config';
+import { SessionGrantStrip } from '@/components/SessionGrantStrip';
+import { fetchSessionGrants, postChatResumeDecision, revokeSessionGrant } from '@/lib/hil';
 import { cn } from '@/lib/utils';
 import { THEME_STORAGE_KEY, applyTheme, resolveInitialTheme, type ThemeMode } from '@/store/theme';
 import { useSession } from '@/store/use-session';
@@ -86,6 +87,8 @@ export default function HomePage() {
     contextWindowData,
     stateMessages,
     sessionMeta,
+    sessionId,
+    userId,
     addTraceEvent,
     addTraceBlock,
     addMessage,
@@ -97,6 +100,7 @@ export default function HomePage() {
   const [lastActivityTime, setLastActivityTime] = useState<number | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [currentInterrupt, setCurrentInterrupt] = useState<InterruptData | null>(null);
+  const [sessionGrants, setSessionGrants] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'chain' | 'context'>('chain');
   const [theme, setTheme] = useState<ThemeMode>('light');
 
@@ -125,6 +129,28 @@ export default function HomePage() {
     setShowConfirmModal(true);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSessionGrants() {
+      try {
+        const grants = await fetchSessionGrants(sessionId);
+        if (!cancelled) {
+          setSessionGrants(grants);
+        }
+      } catch {
+        if (!cancelled) {
+          setSessionGrants([]);
+        }
+      }
+    }
+
+    void loadSessionGrants();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
   // SSE handlers are registered here; handleSendMessage is passed to ChatProvider
   const { handleSendMessage } = useSSEHandlers({
     onHILInterrupt: handleHILInterrupt,
@@ -135,21 +161,19 @@ export default function HomePage() {
   // ---- HIL confirm/cancel (use direct fetch + consumeSSEStream) ----
 
   const handleConfirm = useCallback(
-    async (interruptId: string) => {
+    async (interruptId: string, grantSession: boolean) => {
       setShowConfirmModal(false);
       setCurrentInterrupt(null);
       setLoading(true);
 
       try {
-        const response = await fetch(getChatResumeUrl(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: useSession.getState().sessionId,
-            user_id: useSession.getState().userId,
-            interrupt_id: interruptId,
-            approved: true,
-          }),
+        const toolName = currentInterrupt?.tool_name;
+        const response = await postChatResumeDecision({
+          sessionId,
+          userId,
+          interruptId,
+          approved: true,
+          grantSession,
         });
 
         await consumeSSEStream(response, ({ event, data }) => {
@@ -162,6 +186,15 @@ export default function HomePage() {
             return;
           }
           if (event === 'tool_result') return;
+          if (event === 'hil_resolved' && grantSession && toolName) {
+            const grantedTools = Array.isArray((data as { granted_tools?: string[] }).granted_tools)
+              ? ((data as { granted_tools?: string[] }).granted_tools as string[])
+              : null;
+            setSessionGrants((prev) =>
+              grantedTools ?? (prev.includes(toolName) ? prev : [...prev, toolName])
+            );
+            return;
+          }
           if (event === 'done') {
             setLoading(false);
           }
@@ -171,7 +204,7 @@ export default function HomePage() {
         setLoading(false);
       }
     },
-    [addTraceEvent, addTraceBlock, setLoading, setError],
+    [addTraceEvent, addTraceBlock, currentInterrupt, sessionId, userId, setLoading, setError],
   );
 
   const handleCancel = useCallback(
@@ -181,15 +214,11 @@ export default function HomePage() {
       setLoading(true);
 
       try {
-        const response = await fetch(getChatResumeUrl(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: useSession.getState().sessionId,
-            user_id: useSession.getState().userId,
-            interrupt_id: interruptId,
-            approved: false,
-          }),
+        const response = await postChatResumeDecision({
+          sessionId,
+          userId,
+          interruptId,
+          approved: false,
         });
 
         await consumeSSEStream(response, ({ event, data }) => {
@@ -214,7 +243,23 @@ export default function HomePage() {
         setLoading(false);
       }
     },
-    [addTraceEvent, addTraceBlock, addMessage, setLoading, setError],
+    [addTraceEvent, addTraceBlock, addMessage, sessionId, userId, setLoading, setError],
+  );
+
+  const handleRevokeGrant = useCallback(
+    async (toolName: string) => {
+      try {
+        const grants = await revokeSessionGrant({
+          sessionId,
+          userId,
+          toolName,
+        });
+        setSessionGrants(grants);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : '撤销会话放行失败');
+      }
+    },
+    [sessionId, userId, setError],
   );
 
   return (
@@ -244,6 +289,11 @@ export default function HomePage() {
       <div className="flex flex-1 gap-3 overflow-hidden px-3 pb-3 pt-2 md:gap-4 md:px-6 md:pb-5">
         {/* Chat area — wrapped with ChatProvider for assistant-ui runtime */}
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[30px] border border-border/35 bg-bg-base/80 backdrop-blur-md">
+          <SessionGrantStrip
+            grants={sessionGrants}
+            onRevoke={handleRevokeGrant}
+            className="lg:hidden"
+          />
           <ChatProvider onSendMessage={handleSendMessage}>
             <MessageList
               messages={messages}
@@ -320,6 +370,8 @@ export default function HomePage() {
                   slotDetails={slotDetails}
                   stateMessages={stateMessages}
                   lastActivityTime={lastActivityTime}
+                  sessionGrants={sessionGrants}
+                  onRevokeTool={handleRevokeGrant}
                 />
               )}
             </motion.div>
@@ -331,8 +383,8 @@ export default function HomePage() {
       <ConfirmModal
         isOpen={showConfirmModal}
         interrupt={currentInterrupt}
-        onConfirm={(interruptId) => {
-          void handleConfirm(interruptId);
+        onConfirm={(interruptId, grantSession) => {
+          void handleConfirm(interruptId, grantSession);
         }}
         onCancel={(interruptId) => {
           void handleCancel(interruptId);

@@ -82,3 +82,33 @@ class TestActivateSkillMissing:
 
         result = activate_skill.invoke({"name": "nonexistent-skill"})
         assert "Available:" in result
+
+
+class TestActivateSkillErrorPaths:
+    def test_returns_error_when_scan_raises(self, monkeypatch_skill_manager, mock_skill_manager):
+        from app.tools.readonly.skill_loader import activate_skill
+
+        mock_skill_manager.scan.side_effect = RuntimeError("scan failed")
+        result = activate_skill.invoke({"name": "test-skill"})
+
+        assert "Error:" in result
+        assert "failed to scan skills directory" in result
+        assert "scan failed" in result
+
+    def test_returns_error_when_skills_directory_missing(
+        self, monkeypatch_skill_manager, mock_skill_manager
+    ):
+        from app.tools.readonly.skill_loader import activate_skill
+
+        mock_skill_manager.scan.side_effect = FileNotFoundError("skills directory not found")
+        result = activate_skill.invoke({"name": "test-skill"})
+
+        assert "Error:" in result
+        assert "failed to scan skills directory" in result
+        assert "skills directory not found" in result
+
+    def test_returns_error_when_name_is_empty(self, monkeypatch_skill_manager):
+        from app.tools.readonly.skill_loader import activate_skill
+
+        result = activate_skill.invoke({"name": ""})
+        assert result == "Error: skill name cannot be empty."

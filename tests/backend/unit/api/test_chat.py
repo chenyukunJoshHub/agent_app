@@ -3,12 +3,14 @@ Unit tests for app.api.chat.
 
 These tests verify chat API endpoints and SSE streaming.
 """
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
+from langgraph.types import Interrupt
 
 from app.api.chat import (
     ChatRequest,
@@ -253,6 +255,142 @@ class TestExecuteAgent:
         await _execute_agent(mock_agent, "test message", {}, mock_queue,
                              user_id="test", tools_logger=MagicMock(), sse_logger=MagicMock())
 
+    @pytest.mark.asyncio
+    async def test_execute_agent_interrupt_event_uses_hitl_payload_metadata(self) -> None:
+        """HIL SSE should surface real tool metadata from LangGraph interrupt payload."""
+        mock_agent = MagicMock()
+
+        async def mock_stream(*args, **kwargs):
+            yield (
+                "updates",
+                {
+                    "__interrupt__": (
+                        Interrupt(
+                            value={
+                                "action_requests": [
+                                    {
+                                        "name": "send_email",
+                                        "args": {
+                                            "to": "user@example.com",
+                                            "subject": "Hello",
+                                            "body": "Body",
+                                        },
+                                        "description": "Tool execution requires approval",
+                                    }
+                                ],
+                                "review_configs": [
+                                    {
+                                        "action_name": "send_email",
+                                        "allowed_decisions": ["approve", "reject"],
+                                    }
+                                ],
+                            },
+                            id="interrupt-real",
+                        ),
+                    )
+                },
+            )
+
+        mock_agent.astream = mock_stream
+        mock_queue = SSEEventQueue()
+
+        class FakeInterruptStore:
+            async def save_interrupt(self, **kwargs):
+                return kwargs["interrupt_id"]
+
+        with patch(
+            "app.api.chat.get_interrupt_store",
+            new=AsyncMock(return_value=FakeInterruptStore()),
+        ):
+            await _execute_agent(
+                mock_agent,
+                "test",
+                {"configurable": {"thread_id": "session-1"}},
+                mock_queue,
+                user_id="test",
+                tools_logger=MagicMock(),
+                sse_logger=MagicMock(),
+                session_id="session-1",
+            )
+
+        event = await mock_queue.get()
+        assert event[0] == "hil_interrupt"
+        assert event[1]["interrupt_id"] == "interrupt-real"
+        assert event[1]["tool_name"] == "send_email"
+        assert event[1]["tool_args"]["to"] == "user@example.com"
+        assert event[1]["risk_level"] == "high"
+        assert event[1]["message"] == "Tool execution requires approval"
+        assert event[1]["allowed_decisions"] == ["approve", "reject"]
+        assert len(event[1]["action_requests"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_agent_emits_all_action_requests_for_multi_tool_interrupt(self) -> None:
+        """Multi-action interrupts must surface every approval target to the frontend."""
+        mock_agent = MagicMock()
+
+        async def mock_stream(*args, **kwargs):
+            yield (
+                "updates",
+                {
+                    "__interrupt__": (
+                        SimpleNamespace(
+                            value={
+                                "action_requests": [
+                                    {
+                                        "name": "fetch_url",
+                                        "args": {"url": "https://example.com"},
+                                        "description": "Fetch external URL",
+                                    },
+                                    {
+                                        "name": "send_email",
+                                        "args": {"to": "user@example.com", "subject": "x", "body": "y"},
+                                        "description": "Send external email",
+                                    },
+                                ],
+                                "review_configs": [
+                                    {"action_name": "fetch_url", "allowed_decisions": ["approve", "reject"]},
+                                    {"action_name": "send_email", "allowed_decisions": ["approve", "reject"]},
+                                ],
+                            },
+                            id="interrupt-multi",
+                        ),
+                    )
+                },
+            )
+
+        mock_agent.astream = mock_stream
+        mock_queue = SSEEventQueue()
+
+        class FakeInterruptStore:
+            async def save_interrupt(self, **kwargs):
+                return kwargs["interrupt_id"]
+
+        with patch(
+            "app.api.chat.get_interrupt_store",
+            new=AsyncMock(return_value=FakeInterruptStore()),
+        ):
+            await _execute_agent(
+                mock_agent,
+                "test",
+                {"configurable": {"thread_id": "session-1"}},
+                mock_queue,
+                user_id="test",
+                tools_logger=MagicMock(),
+                sse_logger=MagicMock(),
+                session_id="session-1",
+            )
+
+        event = await mock_queue.get()
+        assert event[0] == "hil_interrupt"
+        assert event[1]["interrupt_id"] == "interrupt-multi"
+        assert event[1]["tool_name"] == "fetch_url"
+        assert event[1]["message"] == "Agent 准备执行 2 个需审批操作，请确认"
+        assert event[1]["risk_level"] == "high"
+        assert [req["name"] for req in event[1]["action_requests"]] == [
+            "fetch_url",
+            "send_email",
+        ]
+
 
 class TestRunAgentStream:
     """Test _run_agent_stream function."""
@@ -261,12 +399,14 @@ class TestRunAgentStream:
     async def test_stream_yields_sse_events(self) -> None:
         """Test that _run_agent_stream yields SSE-formatted events."""
         with patch("app.api.chat.create_react_agent") as mock_create_agent:
-
-            # Setup mocks — create_react_agent is async
             mock_agent = MagicMock()
-            mock_agent.astream = AsyncMock()
             mock_create_agent.return_value = mock_agent
-            mock_create_agent.__call__ = AsyncMock(return_value=mock_agent)
+
+            async def _astream(*args, **kwargs):
+                if False:
+                    yield None
+
+            mock_agent.astream = _astream
 
             # Stream events
             events = []
@@ -460,6 +600,58 @@ class TestChatResumeEndpoint:
             assert any("idempotent_replay" in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
+    async def test_resume_updates_interrupt_status_and_emits_resolution_event(self) -> None:
+        """Resume should update interrupt status before streaming the resolved event."""
+        store = MagicMock()
+        store.get_interrupt = AsyncMock(
+            return_value={
+                "status": "pending",
+                "tool_name": "send_email",
+                "tool_args": {
+                    "to": "approved@example.com",
+                    "subject": "Approved",
+                    "body": "Body",
+                },
+            }
+        )
+        store.update_interrupt_status = AsyncMock(return_value=None)
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=store),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-status-session",
+                    interrupt_id="interrupt-approved",
+                    approved=True,
+                )
+            )
+            chunks = await self._consume_streaming_response(response)
+
+        assert store.update_interrupt_status.await_args_list[0].args == ("interrupt-approved", "processing")
+        assert store.update_interrupt_status.await_args_list[-1].args == ("interrupt-approved", "confirmed")
+        assert any("hil_resolved" in chunk for chunk in chunks)
+        assert any("已批准执行 send_email 操作" in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
     async def test_resume_approved_executes_for_different_send_email_payload(self) -> None:
         """Different send_email payloads should not be deduplicated."""
         from app.api.chat import _RESUME_IDEMPOTENCY_STORE
@@ -588,6 +780,174 @@ class TestChatResumeEndpoint:
             assert isinstance(call_inputs[0], Command)
             command_payload = call_inputs[0].resume["interrupt-reject"]
             assert command_payload["decisions"][0]["type"] == "reject"
+
+    @pytest.mark.asyncio
+    async def test_resume_approve_repeats_decisions_for_multiple_action_requests(self) -> None:
+        """A single boolean approval should fan out to all HITL actions in the same interrupt."""
+        from langgraph.types import Command
+
+        class FakeInterruptStore:
+            async def get_interrupt(self, interrupt_id: str) -> dict:
+                return {
+                    "status": "pending",
+                    "tool_name": "send_email",
+                    "tool_args": {
+                        "to": "user@example.com",
+                        "subject": "Batch",
+                        "body": "Body",
+                    },
+                    "action_requests": [
+                        {"name": "send_email", "args": {"to": "a@example.com"}},
+                        {"name": "send_email", "args": {"to": "b@example.com"}},
+                    ],
+                }
+
+            async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+                return None
+
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=FakeInterruptStore()),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-batch-session",
+                    interrupt_id="interrupt-batch",
+                    approved=True,
+                )
+            )
+            await self._consume_streaming_response(response)
+
+        assert len(call_inputs) == 1
+        payload = call_inputs[0].resume["interrupt-batch"]
+        assert len(payload["decisions"]) == 2
+        assert all(decision["type"] == "approve" for decision in payload["decisions"])
+
+    @pytest.mark.asyncio
+    async def test_resume_approved_with_grant_session_calls_policy_grant(self) -> None:
+        """Grant-session approval should promote the tool to session allow before resume execution."""
+        from langgraph.types import Command
+
+        class FakeInterruptStore:
+            async def get_interrupt(self, interrupt_id: str) -> dict:
+                return {
+                    "status": "pending",
+                    "tool_name": "send_email",
+                    "tool_args": {
+                        "to": "grant@example.com",
+                        "subject": "Grant",
+                        "body": "Body",
+                    },
+                }
+
+            async def update_interrupt_status(self, interrupt_id: str, status: str) -> None:
+                return None
+
+        call_inputs: list[Command] = []
+
+        class FakeState:
+            values = {"messages": []}
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                call_inputs.append(input_data)
+                if False:
+                    yield None
+
+            async def aget_state(self, config):
+                return FakeState()
+
+        grant_mock = AsyncMock(return_value=["send_email"])
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=FakeInterruptStore()),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+            patch("app.api.chat.grant_session_tool_access", new=grant_mock),
+        ):
+            response = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-grant-session",
+                    interrupt_id="interrupt-grant",
+                    approved=True,
+                    grant_session=True,
+                )
+            )
+            await self._consume_streaming_response(response)
+
+        grant_mock.assert_awaited_once_with("resume-grant-session", "send_email")
+        assert len(call_inputs) == 1
+
+    @pytest.mark.asyncio
+    async def test_resume_error_rolls_interrupt_status_back_to_pending(self) -> None:
+        """Execution failures after optimistic resume must keep the interrupt retryable."""
+        store = MagicMock()
+        store.get_interrupt = AsyncMock(
+            return_value={
+                "status": "pending",
+                "tool_name": "send_email",
+                "tool_args": {
+                    "to": "boom@example.com",
+                    "subject": "Boom",
+                    "body": "Body",
+                },
+            }
+        )
+        store.update_interrupt_status = AsyncMock(return_value=None)
+
+        class FakeAgent:
+            async def astream(self, input_data, *args, **kwargs):
+                raise RuntimeError("resume failed")
+                if False:
+                    yield None
+
+        with (
+            patch(
+                "app.observability.interrupt_store.get_interrupt_store",
+                new=AsyncMock(return_value=store),
+            ),
+            patch(
+                "app.api.chat.create_react_agent",
+                new=AsyncMock(return_value=FakeAgent()),
+            ),
+        ):
+            response = await chat_resume(
+                ChatResumeRequest(
+                    session_id="resume-error-session",
+                    interrupt_id="interrupt-error",
+                    approved=True,
+                )
+            )
+            chunks = await self._consume_streaming_response(response)
+
+        assert store.update_interrupt_status.await_args_list[0].args == ("interrupt-error", "processing")
+        assert store.update_interrupt_status.await_args_list[-1].args == ("interrupt-error", "pending")
+        assert any("event: error" in chunk for chunk in chunks)
 
 
 class TestChatIntegration:

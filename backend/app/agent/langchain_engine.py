@@ -6,9 +6,10 @@ P1: HIL middleware for manual intervention.
 P1: Skills system integration (SkillManager + read_file tool).
 """
 import asyncio
-from typing import Any
 from dataclasses import dataclass
 from inspect import isawaitable
+from pathlib import Path
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
@@ -17,20 +18,24 @@ from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 
 from app.agent.context import AgentContext
-from app.agent.middleware.hil import HILMiddleware
 from app.agent.middleware.memory import MemoryMiddleware
 from app.agent.middleware.summarization import create_summarization_middleware
+from app.agent.middleware.tool_execution import ToolExecutionMiddleware
+from app.agent.middleware.tool_policy import PolicyHITLMiddleware
 from app.agent.middleware.trace import TraceMiddleware
 from app.config import settings
 from app.db.postgres import get_checkpointer, get_store
 from app.llm.factory import llm_factory
 from app.memory.manager import MemoryManager
-from app.observability.interrupt_store import get_interrupt_store
 from app.observability.trace_events import emit_trace_event
 from app.prompt.builder import build_system_prompt
 from app.prompt.budget import DEFAULT_BUDGET
 from app.skills.manager import SkillManager
+from app.tools.base import ToolMeta
 from app.tools.file import read_file
+from app.tools.idempotency import IdempotencyStore
+from app.tools.manager import ToolManager
+from app.tools.policy import PolicyEngine
 from app.tools.registry import build_tool_registry
 from app.tools.search import web_search
 from app.utils.token import count_tokens
@@ -98,6 +103,8 @@ class _CachedAgent:
     slot_snapshot_dict: dict[str, Any]
     slot_usage: list[dict[str, Any]]
     tool_names: list[str]
+    tool_manager: ToolManager
+    policy_engine: PolicyEngine
     skill_names: list[str]
     skill_version: int
     model_name: str
@@ -177,28 +184,37 @@ async def _build_agent_internal(
     # Initialize tools
     logger.info("🔧 [初始化] 正在注册工具集...")
     if tools is None:
-        tools, _tool_manager, _policy_engine = build_tool_registry(enable_hil=True)
+        tools, tool_manager, policy_engine = build_tool_registry(enable_hil=True)
     else:
-        from app.tools.base import ToolMeta
-        from app.tools.manager import ToolManager
-        from app.tools.policy import PolicyEngine
+        tools = list(tools)
         tool_metas = {
             t.name: ToolMeta(effect_class="external_write", allowed_decisions=["ask", "deny"])
             for t in tools
         }
-        ToolManager(tool_metas)
-        PolicyEngine()
+        if read_file not in tools:
+            tools.append(read_file)
+            tool_metas[read_file.name] = ToolMeta(
+                effect_class="read",
+                allowed_decisions=["allow"],
+                idempotent=True,
+                max_retries=1,
+                timeout_seconds=10,
+                backoff=None,
+                can_parallelize=True,
+                audit_tags=["file", "readonly"],
+            )
+        tool_manager = ToolManager(tool_metas)
+        policy_engine = PolicyEngine()
 
-    if read_file not in tools:
-        tools = list(tools) + [read_file]
     tool_names = [t.name for t in tools]
     logger.info(f"✅ [初始化] 工具注册完成，共 {len(tools)} 个: {tool_names}")
 
     # Initialize SkillManager
     if skills_dir is None:
         skills_dir = settings.skills_dir
-    logger.info(f"📚 [初始化] 正在初始化 SkillManager，路径: {skills_dir}")
-    skill_manager = SkillManager.get_instance(skills_dir=skills_dir)
+    resolved_skills_dir = str(Path(skills_dir).expanduser().resolve())
+    logger.info(f"📚 [初始化] 正在初始化 SkillManager，路径: {resolved_skills_dir}")
+    skill_manager = SkillManager.get_instance(skills_dir=resolved_skills_dir)
     skill_snapshot = skill_manager.build_snapshot()
     skill_names = [s.name for s in skill_snapshot.skills]
     logger.info(f"✅ [初始化] SkillManager 就绪，{len(skill_snapshot.skills)} 个技能: {skill_names}")
@@ -223,16 +239,20 @@ async def _build_agent_internal(
 
     # Create middleware stack — no sse_queue; injected per-request via AgentContext
     logger.info("🧩 [初始化] 正在构建 Middleware 堆栈...")
-    interrupt_store = await get_interrupt_store()
     store = await get_store()
     checkpointer = await get_checkpointer()
     memory_manager = MemoryManager(store=store)
+    idempotency_store = IdempotencyStore()
 
     middleware = [
         MemoryMiddleware(memory_manager=memory_manager),
         create_summarization_middleware(model=llm),
         TraceMiddleware(),
-        HILMiddleware(interrupt_store=interrupt_store),
+        PolicyHITLMiddleware(tool_manager=tool_manager, policy_engine=policy_engine),
+        ToolExecutionMiddleware(
+            tool_manager=tool_manager,
+            idempotency_store=idempotency_store,
+        ),
     ]
     middleware_names = [type(m).__name__ for m in middleware]
     logger.info(f"✅ [初始化] Middleware 堆栈就绪: {' → '.join(middleware_names)}")
@@ -254,6 +274,8 @@ async def _build_agent_internal(
         slot_snapshot_dict=slot_snapshot.to_dict(),
         slot_usage=_build_slot_usage(slot_snapshot),
         tool_names=tool_names,
+        tool_manager=tool_manager,
+        policy_engine=policy_engine,
         skill_names=skill_names,
         skill_version=skill_snapshot.version,
         model_name=model_name,
@@ -419,4 +441,42 @@ def get_default_tools() -> list[BaseTool]:
     return tools
 
 
-__all__ = ["create_react_agent", "get_default_tools"]
+async def grant_session_tool_access(session_id: str, tool_name: str) -> list[str]:
+    """Grant allow-once-per-session bypass for a tool on the cached policy engine."""
+    global _agent_cache
+    if _agent_cache is None:
+        await create_react_agent()
+    assert _agent_cache is not None
+
+    meta = _agent_cache.tool_manager.get_meta(tool_name)
+    if meta is None:
+        raise ValueError(f"Unknown tool for session grant: {tool_name}")
+    if meta.effect_class == "destructive":
+        raise ValueError(f"Destructive tool cannot be session granted: {tool_name}")
+
+    _agent_cache.policy_engine.grant_session(tool_name, session_id=session_id)
+    return sorted(_agent_cache.policy_engine.get_granted_tools(session_id))
+
+
+async def revoke_session_tool_access(session_id: str, tool_name: str) -> list[str]:
+    """Remove a previously granted session allow for a tool."""
+    if _agent_cache is None:
+        return []
+    _agent_cache.policy_engine.revoke_session(tool_name, session_id=session_id)
+    return sorted(_agent_cache.policy_engine.get_granted_tools(session_id))
+
+
+async def get_session_granted_tools(session_id: str) -> list[str]:
+    """Return the currently granted tools for a session."""
+    if _agent_cache is None:
+        return []
+    return sorted(_agent_cache.policy_engine.get_granted_tools(session_id))
+
+
+__all__ = [
+    "create_react_agent",
+    "get_default_tools",
+    "grant_session_tool_access",
+    "revoke_session_tool_access",
+    "get_session_granted_tools",
+]

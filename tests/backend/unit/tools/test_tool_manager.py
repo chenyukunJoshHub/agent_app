@@ -38,6 +38,33 @@ class TestToolManagerGetMeta:
         tm = ToolManager(_build_metas())
         assert tm.get_meta("nonexistent") is None
 
+    def test_get_meta_returns_copy_not_internal_reference(self) -> None:
+        tm = ToolManager(_build_metas())
+
+        meta_1 = tm.get_meta("web_search")
+        meta_2 = tm.get_meta("web_search")
+
+        assert meta_1 is not None
+        assert meta_2 is not None
+        assert meta_1 == meta_2
+        assert meta_1 is not meta_2
+
+    def test_mutating_returned_meta_does_not_affect_internal_storage(self) -> None:
+        tm = ToolManager(_build_metas())
+
+        original = tm.get_meta("web_search")
+        assert original is not None
+
+        mutated = tm.get_meta("web_search")
+        assert mutated is not None
+        mutated.max_retries = 999
+        mutated.allowed_decisions.append("deny")
+
+        fresh = tm.get_meta("web_search")
+        assert fresh is not None
+        assert fresh.max_retries == original.max_retries
+        assert fresh.allowed_decisions == original.allowed_decisions
+
 
 class TestToolManagerCanRetry:
     def test_idempotent_with_retries(self) -> None:

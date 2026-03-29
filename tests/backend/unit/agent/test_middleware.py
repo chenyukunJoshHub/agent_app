@@ -10,6 +10,7 @@ import pytest
 from app.agent.middleware.memory import MemoryMiddleware
 from app.agent.middleware.trace import TraceMiddleware
 from app.memory.manager import MemoryManager
+from app.prompt.budget import DEFAULT_BUDGET
 
 
 class TestMemoryMiddleware:
@@ -277,6 +278,59 @@ class TestTraceMiddleware:
         assert len(thought_events) == 0
 
     @pytest.mark.asyncio
+    async def test_aafter_model_redacts_sensitive_tool_args(self, trace_middleware: TraceMiddleware, mock_queue) -> None:
+        from langchain_core.messages import AIMessage
+
+        state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "send_email",
+                            "args": {
+                                "to": "user@example.com",
+                                "subject": "Quarterly Report",
+                                "body": "very sensitive content",
+                                "api_key": "secret-api-key",
+                            },
+                            "id": "call-email",
+                            "type": "tool_call",
+                        },
+                        {
+                            "name": "web_search",
+                            "args": {"query": "latest ai news"},
+                            "id": "call-search",
+                            "type": "tool_call",
+                        },
+                    ],
+                )
+            ]
+        }
+        runtime = MagicMock()
+        runtime.context = MagicMock()
+        runtime.context.sse_queue = mock_queue
+
+        await trace_middleware.aafter_model(state, runtime)
+
+        planned_payloads = []
+        while not mock_queue.empty():
+            event_type, data = mock_queue.get_nowait()
+            if event_type != "trace_event":
+                continue
+            if data.get("stage") == "tools" and data.get("step") == "tool_call_planned":
+                planned_payloads.append(data.get("payload", {}))
+
+        email_payload = next(p for p in planned_payloads if p.get("tool_name") == "send_email")
+        assert email_payload["args"]["to"] == "u***@example.com"
+        assert email_payload["args"]["body"] == "[REDACTED]"
+        assert email_payload["args"]["api_key"] == "[REDACTED]"
+        assert email_payload["args"]["subject"] == "Quarterly Report"
+
+        search_payload = next(p for p in planned_payloads if p.get("tool_name") == "web_search")
+        assert search_payload["args"]["query"] == "latest ai news"
+
+    @pytest.mark.asyncio
     async def test_aafter_model_sends_token_update_event(
         self,
         trace_middleware: TraceMiddleware,
@@ -308,7 +362,7 @@ class TestTraceMiddleware:
         while not mock_queue.empty():
             mock_queue.get_nowait()
 
-        await trace_middleware.aafter_model(state, runtime)
+        result = await trace_middleware.aafter_model(state, runtime)
 
         # Check events
         events_sent = []
@@ -323,13 +377,14 @@ class TestTraceMiddleware:
         # Verify token_update data
         _, token_data = token_update_events[0]
         assert token_data["current"] == 150  # 0 + 150
-        assert token_data["budget"] == 32000
+        assert token_data["budget"] == DEFAULT_BUDGET.WORKING_BUDGET
         assert token_data["input_tokens"] == 100
         assert token_data["output_tokens"] == 50
-        assert token_data["remaining"] == 32000 - 150
+        assert token_data["remaining"] == DEFAULT_BUDGET.WORKING_BUDGET - 150
 
-        # Verify state was updated with accumulated usage
-        assert state["_token_usage"] == 150
+        # Verify middleware returns state patch without mutating input state in-place.
+        assert result == {"_token_usage": 150}
+        assert state["_token_usage"] == 0
 
     @pytest.mark.asyncio
     async def test_aafter_model_accumulates_token_usage(
@@ -364,7 +419,7 @@ class TestTraceMiddleware:
         while not mock_queue.empty():
             mock_queue.get_nowait()
 
-        await trace_middleware.aafter_model(state, runtime)
+        result = await trace_middleware.aafter_model(state, runtime)
 
         # Get all events and find token_update
         token_update_found = False
@@ -373,9 +428,11 @@ class TestTraceMiddleware:
             if event_type == "token_update":
                 token_update_found = True
                 assert token_data["current"] == 600  # 500 + 100
-                assert state["_token_usage"] == 600
+                assert token_data["remaining"] == DEFAULT_BUDGET.WORKING_BUDGET - 600
 
         assert token_update_found, "token_update event should be sent"
+        assert result == {"_token_usage": 600}
+        assert state["_token_usage"] == 500
 
     @pytest.mark.asyncio
     async def test_aafter_model_handles_missing_token_usage(
@@ -400,7 +457,7 @@ class TestTraceMiddleware:
         while not mock_queue.empty():
             mock_queue.get_nowait()
 
-        await trace_middleware.aafter_model(state, runtime)
+        result = await trace_middleware.aafter_model(state, runtime)
 
         # Should not send token_update event (no token_usage in metadata)
         events_sent = []
@@ -414,6 +471,7 @@ class TestTraceMiddleware:
 
         # Token usage should remain unchanged
         assert state["_token_usage"] == 100
+        assert result is None
 
 
 class TestTraceBlockBuilderIntegration:

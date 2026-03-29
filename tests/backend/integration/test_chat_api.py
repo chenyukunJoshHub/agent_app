@@ -237,6 +237,49 @@ class TestChatResumeEndpoint:
         assert payload["decisions"][0]["type"] == "reject"
 
 
+class TestChatSessionGrantsEndpoint:
+    @pytest.mark.asyncio
+    async def test_get_session_grants_returns_current_grants(self, async_client: AsyncClient) -> None:
+        with patch(
+            "app.api.chat.get_session_granted_tools",
+            new=AsyncMock(return_value=["send_email"]),
+        ):
+            response = await async_client.get(
+                "/chat/session-grants",
+                params={"session_id": "test_session"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "session_id": "test_session",
+            "granted_tools": ["send_email"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_revoke_session_grant_returns_remaining_tools(self, async_client: AsyncClient) -> None:
+        with patch(
+            "app.api.chat.revoke_session_tool_access",
+            new=AsyncMock(return_value=[]),
+        ) as revoke_mock:
+            response = await async_client.post(
+                "/chat/session-grants/revoke",
+                json={
+                    "session_id": "test_session",
+                    "user_id": "test_user",
+                    "tool_name": "send_email",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "success": True,
+            "session_id": "test_session",
+            "revoked_tool": "send_email",
+            "granted_tools": [],
+        }
+        revoke_mock.assert_awaited_once_with("test_session", "send_email")
+
+
 class TestChatCORS:
     @pytest.mark.asyncio
     async def test_cors_headers(self, async_client: AsyncClient) -> None:

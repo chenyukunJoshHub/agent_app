@@ -13,6 +13,8 @@ interface ContextPanelProps {
   stateMessages: StateMessage[];
   /** Unix timestamp（ms）—由 page.tsx 在 done 事件时更新 */
   lastActivityTime: number | null;
+  sessionGrants?: string[];
+  onRevokeTool?: (toolName: string) => void;
 }
 
 export function ContextPanel({
@@ -21,6 +23,8 @@ export function ContextPanel({
   slotDetails,
   stateMessages,
   lastActivityTime,
+  sessionGrants = [],
+  onRevokeTool,
 }: ContextPanelProps) {
   const hasCompressionEvents = contextWindowData.compressionEvents.length > 0;
 
@@ -32,6 +36,8 @@ export function ContextPanel({
         budget={contextWindowData.budget}
         stateMessages={stateMessages}
         lastActivityTime={lastActivityTime}
+        sessionGrants={sessionGrants}
+        onRevokeTool={onRevokeTool}
       />
 
       {/* Module 2: 上下文窗口 · Token 地图 */}

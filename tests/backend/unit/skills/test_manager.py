@@ -15,8 +15,10 @@ from pathlib import Path
 import pytest
 
 from app.skills.models import (
+    InvocationPolicy,
     SkillDefinition,
     SkillEntry,
+    SkillMetadata,
     SkillSnapshot,
     SkillStatus,
 )
@@ -607,6 +609,73 @@ Please help users."""
         assert len(system_message) > len(snapshot.prompt)
 
 
+class _TrapDefinitions:
+    """Sentinel that fails if read_skill_content falls back to list iteration."""
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __iter__(self):
+        raise AssertionError("read_skill_content should use the name index")
+
+
+class TestSkillManagerReadSkillContent:
+    """Test SkillManager.read_skill_content() indexed lookup behavior."""
+
+    @pytest.fixture
+    def temp_skills_dir(self):
+        """Create a temporary skills directory with one active skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / "skills"
+            skills_dir.mkdir(parents=True, exist_ok=True)
+
+            skill_dir = skills_dir / "legal-search"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                """---
+name: legal-search
+description: Legal search skill
+version: 1.0.0
+status: active
+priority: 10
+tools: []
+---
+# Legal Search
+
+Use search to find regulations.
+""",
+                encoding="utf-8",
+            )
+
+            yield skills_dir
+
+    def test_read_skill_content_uses_name_index_for_lookup(self, temp_skills_dir):
+        """验证 read_skill_content() 使用 name 索引而非线性扫描 definitions."""
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+        manager.scan()
+
+        manager._definitions = _TrapDefinitions()  # type: ignore[assignment]
+
+        content = manager.read_skill_content("legal-search")
+
+        assert "# Legal Search" in content
+        assert "Use search to find regulations." in content
+
+    def test_read_skill_content_not_found_lists_available_names_from_index(
+        self, temp_skills_dir
+    ):
+        """验证未命中时可用 skill 列表来自索引而非 definitions 线性遍历."""
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+        manager.scan()
+
+        manager._definitions = _TrapDefinitions()  # type: ignore[assignment]
+
+        error = manager.read_skill_content("missing-skill")
+
+        assert "missing-skill" in error
+        assert "legal-search" in error
+
+
 class TestSkillManagerBudgetDowngrade:
     """Test SkillManager.build_snapshot() 3-level budget downgrade strategy."""
 
@@ -796,6 +865,48 @@ tools: []
         # Budget is 30,000 characters
         max_budget = 30_000
         assert len(snapshot.prompt) <= max_budget
+
+    def test_level3_truncation_uses_binary_search(
+        self, temp_skills_dir
+    ):
+        """验证 Level 3 截断使用二分搜索而非线性回退."""
+        manager = SkillManager(
+            skills_dir=str(temp_skills_dir), max_prompt_chars=150
+        )
+
+        definitions = [
+            SkillDefinition(
+                id=f"skill-{i:02d}",
+                name=f"skill-{i:02d}",
+                version="1.0.0",
+                metadata=SkillMetadata(
+                    description=f"skill {i}",
+                    priority=100 - i,
+                ),
+                file_path=f"/tmp/skill-{i:02d}/SKILL.md",
+                tools=[],
+                invocation=InvocationPolicy(),
+                status=SkillStatus.ACTIVE,
+            )
+            for i in range(64)
+        ]
+
+        prompt_call_counts: list[int] = []
+
+        def fake_build_prompt(entries: list[SkillEntry]) -> str:
+            prompt_call_counts.append(len(entries))
+            return "x" * (len(entries) * 10)
+
+        manager._build_prompt = fake_build_prompt  # type: ignore[method-assign]
+
+        truncated = manager._truncate_to_fit_budget(definitions)
+
+        assert len(truncated) == 15
+        assert [entry.name for entry in truncated] == [
+            f"skill-{i:02d}" for i in range(15)
+        ]
+        assert len(prompt_call_counts) <= 7
+        assert prompt_call_counts[0] != len(definitions)
 
     def test_skill_with_disable_model_invocation_excluded(
         self, temp_skills_dir
@@ -1036,3 +1147,140 @@ This is a test skill.
         # Assert new instance has new value
         assert manager2._max_prompt_chars == 20_000
         assert manager1 is not manager2
+
+
+class TestSkillManagerMtimeCache:
+    """Test SkillManager scan/build_snapshot mtime cache behavior."""
+
+    @pytest.fixture
+    def temp_skills_dir(self):
+        """Create a temporary skills directory with sample skills."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / "skills"
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            yield skills_dir
+
+    @staticmethod
+    def _write_skill(skills_dir: Path, skill_id: str, description: str = "desc") -> Path:
+        skill_dir = skills_dir / skill_id
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text(
+            f"""---
+name: {skill_id}
+description: {description}
+version: 1.0.0
+status: active
+priority: 1
+tools: []
+---
+# {skill_id}
+""",
+            encoding="utf-8",
+        )
+        return skill_file
+
+    def test_first_build_snapshot_parses_all_skill_files(self, temp_skills_dir, monkeypatch):
+        """首次 build_snapshot 应执行全量解析."""
+        self._write_skill(temp_skills_dir, "skill-a")
+        self._write_skill(temp_skills_dir, "skill-b")
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+
+        parse_count = 0
+        original_parse = manager._parse_skill_file
+
+        def counting_parse(skill_file: Path):
+            nonlocal parse_count
+            parse_count += 1
+            return original_parse(skill_file)
+
+        monkeypatch.setattr(manager, "_parse_skill_file", counting_parse)
+        snapshot = manager.build_snapshot()
+
+        assert len(snapshot.skills) == 2
+        assert parse_count == 2
+
+    def test_second_build_snapshot_uses_cache_when_files_unchanged(
+        self, temp_skills_dir, monkeypatch
+    ):
+        """第二次 build_snapshot 在文件未变时应命中缓存，不重复解析."""
+        self._write_skill(temp_skills_dir, "skill-a")
+        self._write_skill(temp_skills_dir, "skill-b")
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+
+        manager.build_snapshot()
+
+        parse_count = 0
+        original_parse = manager._parse_skill_file
+
+        def counting_parse(skill_file: Path):
+            nonlocal parse_count
+            parse_count += 1
+            return original_parse(skill_file)
+
+        monkeypatch.setattr(manager, "_parse_skill_file", counting_parse)
+        snapshot = manager.build_snapshot()
+
+        assert len(snapshot.skills) == 2
+        assert parse_count == 0
+
+    def test_build_snapshot_reparses_changed_files(self, temp_skills_dir, monkeypatch):
+        """文件内容变化后，build_snapshot 应只重新解析变更文件."""
+        skill_a = self._write_skill(temp_skills_dir, "skill-a", description="before")
+        self._write_skill(temp_skills_dir, "skill-b", description="stable")
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+
+        manager.build_snapshot()
+
+        skill_a.write_text(
+            """---
+name: skill-a
+description: after
+version: 1.0.0
+status: active
+priority: 1
+tools: []
+---
+# skill-a
+""",
+            encoding="utf-8",
+        )
+
+        parse_count = 0
+        original_parse = manager._parse_skill_file
+
+        def counting_parse(skill_file: Path):
+            nonlocal parse_count
+            parse_count += 1
+            return original_parse(skill_file)
+
+        monkeypatch.setattr(manager, "_parse_skill_file", counting_parse)
+        snapshot = manager.build_snapshot()
+
+        assert len(snapshot.skills) == 2
+        assert parse_count == 1
+        skill_a_entry = next(skill for skill in snapshot.skills if skill.name == "skill-a")
+        assert "after" in skill_a_entry.description
+
+    def test_build_snapshot_reparses_when_new_file_added(self, temp_skills_dir, monkeypatch):
+        """新增 skill 文件后，build_snapshot 应解析新增文件并更新快照."""
+        self._write_skill(temp_skills_dir, "skill-a")
+        manager = SkillManager(skills_dir=str(temp_skills_dir))
+
+        manager.build_snapshot()
+        self._write_skill(temp_skills_dir, "skill-b")
+
+        parse_count = 0
+        original_parse = manager._parse_skill_file
+
+        def counting_parse(skill_file: Path):
+            nonlocal parse_count
+            parse_count += 1
+            return original_parse(skill_file)
+
+        monkeypatch.setattr(manager, "_parse_skill_file", counting_parse)
+        snapshot = manager.build_snapshot()
+
+        assert len(snapshot.skills) == 2
+        assert {skill.name for skill in snapshot.skills} == {"skill-a", "skill-b"}
+        assert parse_count == 1

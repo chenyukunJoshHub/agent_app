@@ -49,12 +49,42 @@ class TestPolicyEngineAllowedDecisions:
         result = engine.decide("send_email", "external_write", allowed_decisions=[])
         assert result == "ask"
 
+    def test_allowed_decisions_can_force_more_restrictive_ask(self, engine: PolicyEngine) -> None:
+        result = engine.decide("fetch_url", "read", allowed_decisions=["ask"])
+        assert result == "ask"
+
 
 class TestPolicyEngineSessionGrants:
+    def test_grant_overrides_restrictive_deny_decision(self) -> None:
+        engine = PolicyEngine()
+        engine.grant_session("send_email", session_id="thread-1")
+        assert (
+            engine.decide(
+                "send_email",
+                "external_write",
+                allowed_decisions=["deny"],
+                session_id="thread-1",
+            )
+            == "allow"
+        )
+
     def test_grant_overrides_default(self) -> None:
         engine = PolicyEngine()
         engine.grant_session("send_email")
         assert engine.decide("send_email", "external_write") == "allow"
+
+    def test_grant_overrides_allowed_decisions_for_same_session(self) -> None:
+        engine = PolicyEngine()
+        engine.grant_session("send_email", session_id="thread-1")
+        assert (
+            engine.decide(
+                "send_email",
+                "external_write",
+                allowed_decisions=["ask", "deny"],
+                session_id="thread-1",
+            )
+            == "allow"
+        )
 
     def test_grant_does_not_affect_other_tools(self) -> None:
         engine = PolicyEngine()
@@ -117,3 +147,15 @@ class TestPolicyEngineHilRequired:
 
     def test_returns_false_for_deny(self, engine: PolicyEngine) -> None:
         assert engine.hil_required("rm_rf", "destructive") is False
+
+    def test_returns_false_after_session_grant(self, engine: PolicyEngine) -> None:
+        engine.grant_session("send_email", session_id="thread-1")
+        assert (
+            engine.hil_required(
+                "send_email",
+                "external_write",
+                allowed_decisions=["ask", "deny"],
+                session_id="thread-1",
+            )
+            is False
+        )

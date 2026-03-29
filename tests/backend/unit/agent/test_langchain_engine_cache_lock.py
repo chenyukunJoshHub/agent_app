@@ -1,6 +1,7 @@
 """Regression tests for create_react_agent cache initialization locking."""
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,6 +34,8 @@ async def test_create_react_agent_builds_once_under_concurrency(monkeypatch: pyt
             skill_names=[],
             skill_version=1,
             model_name="test-model",
+            tool_manager=MagicMock(),
+            policy_engine=MagicMock(),
         )
 
     async def fake_emit(_sse_queue, _cached, _config=None):

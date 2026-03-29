@@ -13,7 +13,7 @@ from dataclasses import fields
 
 import pytest
 
-from app.tools.base import ToolMeta
+from app.tools.base import BackoffConfig, ToolMeta
 
 
 # ─── Fixture helpers ─────────────────────────────────────────────────────────
@@ -154,10 +154,18 @@ class TestToolMetaReliabilityFields:
         assert meta.backoff is None
 
     def test_backoff_dict(self) -> None:
-        backoff = {"strategy": "exponential", "base_seconds": 1}
+        backoff: BackoffConfig = {
+            "strategy": "exponential",
+            "base_seconds": 1,
+        }
         meta = ToolMeta(effect_class="read", backoff=backoff)
         assert meta.backoff["strategy"] == "exponential"
         assert meta.backoff["base_seconds"] == 1
+
+    def test_backoff_config_type_is_exported(self) -> None:
+        backoff: BackoffConfig = {"strategy": "fixed", "base_seconds": 2}
+        meta = ToolMeta(effect_class="read", backoff=backoff)
+        assert meta.backoff == backoff
 
     def test_backoff_none_for_non_idempotent(self) -> None:
         meta = _make_write_meta()
